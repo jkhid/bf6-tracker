@@ -74,6 +74,8 @@ interface Session {
 
 // Gap between activity to consider it a new session (30 min)
 const SESSION_GAP_MS = 30 * 60 * 1000;
+// Merge games within this window into one (handles staggered API updates)
+const GAME_MERGE_MS = 5 * 60 * 1000;
 
 function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
   const weaponsBefore = new Map<string, number>();
@@ -208,17 +210,35 @@ export async function GET(request: NextRequest) {
 
   // Build sessions with per-game granularity
   const sessions: Session[] = sessionGroups.map((sessionEvents, idx) => {
-    // Group events by timestamp (same capture time = same game)
-    const byTime = new Map<string, GameEvent[]>();
-    for (const evt of sessionEvents) {
-      const list = byTime.get(evt.time) || [];
-      list.push(evt);
-      byTime.set(evt.time, list);
-    }
+    // Group events into games by merging events within GAME_MERGE_MS of each other
+    // This handles staggered API updates where the same match shows up at different snapshot times
+    const sortedEvents = [...sessionEvents].sort(
+      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+    );
 
-    // Each unique timestamp group = a game
-    const games: Game[] = [];
-    for (const [time, gameEvents] of byTime) {
+    const gameGroups: GameEvent[][] = [];
+    let currentGame: GameEvent[] = [sortedEvents[0]];
+
+    for (let i = 1; i < sortedEvents.length; i++) {
+      const prevTime = new Date(sortedEvents[i - 1].time).getTime();
+      const currTime = new Date(sortedEvents[i].time).getTime();
+
+      // If same player appears again within merge window, it's a new game
+      const samePlayerInGroup = currentGame.some(
+        (e) => e.playerName === sortedEvents[i].playerName
+      );
+
+      if (currTime - prevTime > GAME_MERGE_MS || samePlayerInGroup) {
+        gameGroups.push(currentGame);
+        currentGame = [sortedEvents[i]];
+      } else {
+        currentGame.push(sortedEvents[i]);
+      }
+    }
+    gameGroups.push(currentGame);
+
+    // Convert game groups to Game objects
+    const games: Game[] = gameGroups.map((gameEvents) => {
       const players = gameEvents.map((evt) =>
         buildPlayerDelta(evt.playerName, evt.before, evt.after)
       );
@@ -229,9 +249,10 @@ export async function GET(request: NextRequest) {
       const wins = Math.max(...players.map((p) => p.wins), 0);
       const losses = Math.max(...players.map((p) => p.losses), 0);
       const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
+      const time = gameEvents[gameEvents.length - 1].time;
 
-      games.push({ time, players, matchCount, kills, deaths, wins, losses });
-    }
+      return { time, players, matchCount, kills, deaths, wins, losses };
+    });
 
     games.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
