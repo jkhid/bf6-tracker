@@ -22,11 +22,18 @@ interface Snapshot {
   repairs: number;
   objectives_armed: number;
   objectives_destroyed: number;
-  weapon_stats: { name: string; kills: number; damage: number }[];
+  weapon_stats: { name: string; kills: number; damage: number; image?: string; altImage?: string }[];
   raw_stats: { userName?: string; avatar?: string };
 }
 
-interface PlayerMatchDelta {
+interface WeaponDelta {
+  name: string;
+  kills: number;
+  image: string;
+  altImage: string;
+}
+
+interface PlayerGameDelta {
   playerName: string;
   displayName: string;
   avatar: string;
@@ -39,28 +46,91 @@ interface PlayerMatchDelta {
   headshotKills: number;
   revives: number;
   vehicleKills: number;
-  weaponDeltas: { name: string; kills: number }[];
+  weaponDeltas: WeaponDelta[];
+}
+
+interface Game {
+  time: string;
+  players: PlayerGameDelta[];
+  matchCount: number;
+  kills: number;
+  deaths: number;
+  wins: number;
+  losses: number;
 }
 
 interface Session {
   id: string;
   startTime: string;
   endTime: string;
-  players: PlayerMatchDelta[];
+  games: Game[];
+  players: string[];
   totalMatches: number;
   totalKills: number;
   totalDeaths: number;
   totalWins: number;
+  totalLosses: number;
 }
 
 // Gap between activity to consider it a new session (30 min)
 const SESSION_GAP_MS = 30 * 60 * 1000;
 
+function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
+  const weaponsBefore = new Map<string, number>();
+  for (const w of before.weapon_stats || []) {
+    weaponsBefore.set(w.name, w.kills);
+  }
+
+  const deltas: WeaponDelta[] = [];
+  for (const w of after.weapon_stats || []) {
+    const beforeKills = weaponsBefore.get(w.name) || 0;
+    const delta = w.kills - beforeKills;
+    if (delta > 0) {
+      deltas.push({
+        name: w.name,
+        kills: delta,
+        image: w.image || '',
+        altImage: w.altImage || '',
+      });
+    }
+  }
+  return deltas.sort((a, b) => b.kills - a.kills);
+}
+
+function buildPlayerDelta(
+  playerName: string,
+  before: Snapshot,
+  after: Snapshot
+): PlayerGameDelta {
+  const displayNames = new Map<string, string>();
+  for (const p of PLAYERS) {
+    displayNames.set(p.name, p.displayName);
+  }
+
+  const killsDelta = after.kills - before.kills;
+  const deathsDelta = after.deaths - before.deaths;
+
+  return {
+    playerName,
+    displayName: displayNames.get(playerName) || playerName,
+    avatar: after.raw_stats?.avatar || '',
+    matchesDelta: after.matches_played - before.matches_played,
+    kills: killsDelta,
+    deaths: deathsDelta,
+    kd: deathsDelta > 0 ? killsDelta / deathsDelta : killsDelta,
+    wins: after.wins - before.wins,
+    losses: after.losses - before.losses,
+    headshotKills: after.headshot_kills - before.headshot_kills,
+    revives: after.revives - before.revives,
+    vehicleKills: after.vehicle_kills - before.vehicle_kills,
+    weaponDeltas: computeWeaponDeltas(before, after).slice(0, 8),
+  };
+}
+
 export async function GET(request: NextRequest) {
   const limit = parseInt(request.nextUrl.searchParams.get('limit') || '20');
   const offset = parseInt(request.nextUrl.searchParams.get('offset') || '0');
 
-  // Fetch recent snapshots for all players (last 7 days)
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: snapshots, error } = await supabase
@@ -85,26 +155,29 @@ export async function GET(request: NextRequest) {
     byPlayer.set(snap.player_name, list);
   }
 
-  // Find all "activity events" — moments where a player's match count changed
-  interface ActivityEvent {
+  // Find all "game events" — moments where a player's match count changed
+  interface GameEvent {
     playerName: string;
     time: string;
     before: Snapshot;
     after: Snapshot;
+    matchesDelta: number;
   }
 
-  const events: ActivityEvent[] = [];
+  const events: GameEvent[] = [];
 
   for (const [playerName, snaps] of byPlayer) {
     for (let i = 1; i < snaps.length; i++) {
       const before = snaps[i - 1];
       const after = snaps[i];
-      if (after.matches_played > before.matches_played) {
+      const matchesDelta = after.matches_played - before.matches_played;
+      if (matchesDelta > 0) {
         events.push({
           playerName,
           time: after.captured_at,
           before,
           after,
+          matchesDelta,
         });
       }
     }
@@ -114,106 +187,83 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ sessions: [], total: 0 });
   }
 
-  // Sort events by time
   events.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
   // Group events into sessions based on time proximity
-  const sessions: ActivityEvent[][] = [];
-  let currentSession: ActivityEvent[] = [events[0]];
+  const sessionGroups: GameEvent[][] = [];
+  let currentGroup: GameEvent[] = [events[0]];
 
   for (let i = 1; i < events.length; i++) {
     const prevTime = new Date(events[i - 1].time).getTime();
     const currTime = new Date(events[i].time).getTime();
 
     if (currTime - prevTime > SESSION_GAP_MS) {
-      sessions.push(currentSession);
-      currentSession = [events[i]];
+      sessionGroups.push(currentGroup);
+      currentGroup = [events[i]];
     } else {
-      currentSession.push(events[i]);
+      currentGroup.push(events[i]);
     }
   }
-  sessions.push(currentSession);
+  sessionGroups.push(currentGroup);
 
-  // Build display name lookup
-  const displayNames = new Map<string, string>();
-  for (const p of PLAYERS) {
-    displayNames.set(p.name, p.displayName);
-  }
-
-  // Convert sessions to response format
-  const formattedSessions: Session[] = sessions.map((sessionEvents, idx) => {
-    // Group events by player within this session
-    const playerEvents = new Map<string, ActivityEvent[]>();
+  // Build sessions with per-game granularity
+  const sessions: Session[] = sessionGroups.map((sessionEvents, idx) => {
+    // Group events by timestamp (same capture time = same game)
+    const byTime = new Map<string, GameEvent[]>();
     for (const evt of sessionEvents) {
-      const list = playerEvents.get(evt.playerName) || [];
+      const list = byTime.get(evt.time) || [];
       list.push(evt);
-      playerEvents.set(evt.playerName, list);
+      byTime.set(evt.time, list);
     }
 
-    const players: PlayerMatchDelta[] = [];
+    // Each unique timestamp group = a game
+    const games: Game[] = [];
+    for (const [time, gameEvents] of byTime) {
+      const players = gameEvents.map((evt) =>
+        buildPlayerDelta(evt.playerName, evt.before, evt.after)
+      );
 
-    for (const [playerName, evts] of playerEvents) {
-      const first = evts[0].before;
-      const last = evts[evts.length - 1].after;
+      const kills = players.reduce((s, p) => s + p.kills, 0);
+      const deaths = players.reduce((s, p) => s + p.deaths, 0);
+      // Team win = max of any player's win delta (not sum)
+      const wins = Math.max(...players.map((p) => p.wins), 0);
+      const losses = Math.max(...players.map((p) => p.losses), 0);
+      const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
 
-      const killsDelta = last.kills - first.kills;
-      const deathsDelta = last.deaths - first.deaths;
-
-      // Compute weapon deltas
-      const weaponsBefore = new Map<string, number>();
-      for (const w of first.weapon_stats || []) {
-        weaponsBefore.set(w.name, w.kills);
-      }
-
-      const weaponDeltas: { name: string; kills: number }[] = [];
-      for (const w of last.weapon_stats || []) {
-        const beforeKills = weaponsBefore.get(w.name) || 0;
-        const delta = w.kills - beforeKills;
-        if (delta > 0) {
-          weaponDeltas.push({ name: w.name, kills: delta });
-        }
-      }
-      weaponDeltas.sort((a, b) => b.kills - a.kills);
-
-      players.push({
-        playerName,
-        displayName: displayNames.get(playerName) || playerName,
-        avatar: last.raw_stats?.avatar || '',
-        matchesDelta: last.matches_played - first.matches_played,
-        kills: killsDelta,
-        deaths: deathsDelta,
-        kd: deathsDelta > 0 ? killsDelta / deathsDelta : killsDelta,
-        wins: last.wins - first.wins,
-        losses: last.losses - first.losses,
-        headshotKills: last.headshot_kills - first.headshot_kills,
-        revives: last.revives - first.revives,
-        vehicleKills: last.vehicle_kills - first.vehicle_kills,
-        weaponDeltas: weaponDeltas.slice(0, 5),
-      });
+      games.push({ time, players, matchCount, kills, deaths, wins, losses });
     }
 
-    const totalKills = players.reduce((s, p) => s + p.kills, 0);
-    const totalDeaths = players.reduce((s, p) => s + p.deaths, 0);
-    const totalWins = players.reduce((s, p) => s + p.wins, 0);
-    const totalMatches = Math.max(...players.map((p) => p.matchesDelta));
+    games.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+    // Session totals
+    const allPlayers = [...new Set(sessionEvents.map((e) => e.playerName))];
+    const displayNames = new Map<string, string>();
+    for (const p of PLAYERS) displayNames.set(p.name, p.displayName);
+
+    const totalKills = games.reduce((s, g) => s + g.kills, 0);
+    const totalDeaths = games.reduce((s, g) => s + g.deaths, 0);
+    const totalWins = games.reduce((s, g) => s + g.wins, 0);
+    const totalLosses = games.reduce((s, g) => s + g.losses, 0);
+    const totalMatches = games.reduce((s, g) => s + g.matchCount, 0);
 
     return {
       id: `session_${idx}`,
       startTime: sessionEvents[0].before.captured_at,
       endTime: sessionEvents[sessionEvents.length - 1].after.captured_at,
-      players,
+      games,
+      players: allPlayers.map((n) => displayNames.get(n) || n),
       totalMatches,
       totalKills,
       totalDeaths,
       totalWins,
+      totalLosses,
     };
   });
 
-  // Reverse so newest sessions are first
-  formattedSessions.reverse();
+  sessions.reverse();
 
-  const total = formattedSessions.length;
-  const paginated = formattedSessions.slice(offset, offset + limit);
+  const total = sessions.length;
+  const paginated = sessions.slice(offset, offset + limit);
 
   return NextResponse.json(
     { sessions: paginated, total },

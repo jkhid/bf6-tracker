@@ -42,12 +42,14 @@ export async function GET(request: NextRequest) {
           .filter((w: { kills: number }) => w.kills > 0)
           .sort((a: { kills: number }, b: { kills: number }) => b.kills - a.kills)
           .slice(0, 15)
-          .map((w: { weaponName: string; kills: number; damage: number; headshots: string; accuracy: string }) => ({
+          .map((w: { weaponName: string; kills: number; damage: number; headshots: string; accuracy: string; image: string; altImage: string }) => ({
             name: w.weaponName,
             kills: w.kills,
             damage: w.damage,
             headshots: w.headshots,
             accuracy: w.accuracy,
+            image: w.image || '',
+            altImage: w.altImage || '',
           }));
 
         const { error } = await supabase.from('snapshots').insert({

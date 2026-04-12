@@ -6,9 +6,11 @@ import Image from 'next/image';
 interface WeaponDelta {
   name: string;
   kills: number;
+  image: string;
+  altImage: string;
 }
 
-interface PlayerMatchDelta {
+interface PlayerGameDelta {
   playerName: string;
   displayName: string;
   avatar: string;
@@ -24,25 +26,35 @@ interface PlayerMatchDelta {
   weaponDeltas: WeaponDelta[];
 }
 
+interface Game {
+  time: string;
+  players: PlayerGameDelta[];
+  matchCount: number;
+  kills: number;
+  deaths: number;
+  wins: number;
+  losses: number;
+}
+
 interface Session {
   id: string;
   startTime: string;
   endTime: string;
-  players: PlayerMatchDelta[];
+  games: Game[];
+  players: string[];
   totalMatches: number;
   totalKills: number;
   totalDeaths: number;
   totalWins: number;
+  totalLosses: number;
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 function timeAgo(iso: string): string {
@@ -50,8 +62,152 @@ function timeAgo(iso: string): string {
   const hours = Math.floor(diff / 3600000);
   if (hours < 1) return `${Math.floor(diff / 60000)}m ago`;
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function WeaponChip({ weapon }: { weapon: WeaponDelta }) {
+  const imgSrc = weapon.altImage || weapon.image;
+  return (
+    <div className="flex items-center gap-1.5 bg-bg-card px-2 py-1 rounded border border-border/50">
+      {imgSrc ? (
+        <Image
+          src={imgSrc}
+          alt={weapon.name}
+          width={28}
+          height={14}
+          className="object-contain"
+          unoptimized
+        />
+      ) : (
+        <span className="text-[9px] text-text-muted w-7 text-center">?</span>
+      )}
+      <span className="text-[11px] text-text-secondary">{weapon.name}</span>
+      <span className="text-[11px] font-bold text-text-primary">+{weapon.kills}</span>
+    </div>
+  );
+}
+
+function PlayerGameCard({ player }: { player: PlayerGameDelta }) {
+  return (
+    <div className="bg-bg-primary rounded-lg p-4 border border-border/50">
+      {/* Player header */}
+      <div className="flex items-center gap-2 mb-3">
+        {player.avatar ? (
+          <Image
+            src={player.avatar}
+            alt={player.displayName}
+            width={32}
+            height={32}
+            className="rounded-full"
+            unoptimized
+          />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-border flex items-center justify-center text-xs text-text-muted">
+            {player.displayName[0]}
+          </div>
+        )}
+        <div>
+          <div className="text-sm font-bold text-text-primary">{player.displayName}</div>
+          {player.matchesDelta > 1 && (
+            <div className="text-[10px] text-text-muted">{player.matchesDelta} matches</div>
+          )}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        <div>
+          <div className="text-[10px] text-text-muted uppercase">K/D</div>
+          <div className="text-base font-bold text-accent-gold tabular-nums">
+            {player.kd.toFixed(2)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] text-text-muted uppercase">Kills</div>
+          <div className="text-base font-bold text-text-primary tabular-nums">{player.kills}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-text-muted uppercase">Deaths</div>
+          <div className="text-base font-bold text-text-primary tabular-nums">{player.deaths}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-text-muted uppercase">Assists</div>
+          <div className="text-base font-bold text-text-primary tabular-nums">
+            {player.revives > 0 ? player.revives : '-'}
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary stats */}
+      {(player.headshotKills > 0 || player.vehicleKills > 0) && (
+        <div className="flex gap-3 text-xs text-text-secondary mb-3">
+          {player.headshotKills > 0 && <span>HS: {player.headshotKills}</span>}
+          {player.vehicleKills > 0 && <span>Vehicles: {player.vehicleKills}</span>}
+        </div>
+      )}
+
+      {/* Weapon deltas with icons */}
+      {player.weaponDeltas.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {player.weaponDeltas.map((w) => (
+            <WeaponChip key={w.name} weapon={w} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GameCard({ game, index }: { game: Game; index: number }) {
+  const isWin = game.wins > 0;
+  const groupKd = game.deaths > 0 ? (game.kills / game.deaths).toFixed(2) : game.kills.toString();
+
+  return (
+    <div className="border-l-2 border-border pl-4 ml-2 relative">
+      {/* Timeline dot */}
+      <div
+        className={`absolute -left-[5px] top-1 w-2 h-2 rounded-full ${
+          isWin ? 'bg-positive' : 'bg-negative'
+        }`}
+      />
+
+      {/* Game header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-text-muted">{formatTime(game.time)}</span>
+          <span
+            className={`text-xs font-bold px-2 py-0.5 rounded ${
+              isWin
+                ? 'bg-positive/10 text-positive'
+                : 'bg-negative/10 text-negative'
+            }`}
+          >
+            {isWin ? 'WIN' : 'LOSS'}
+          </span>
+          {game.matchCount > 1 && (
+            <span className="text-[10px] text-text-muted">
+              ({game.matchCount} matches combined)
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-4 text-xs">
+          <span className="text-text-secondary">
+            Kills: <strong className="text-text-primary">{game.kills}</strong>
+          </span>
+          <span className="text-text-secondary">
+            K/D: <strong className="text-accent-gold">{groupKd}</strong>
+          </span>
+        </div>
+      </div>
+
+      {/* Player cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {game.players.map((p) => (
+          <PlayerGameCard key={p.playerName} player={p} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function Sessions() {
@@ -94,7 +250,10 @@ export default function Sessions() {
     return (
       <div className="text-center py-12 text-text-muted">
         <p className="text-lg mb-2">No sessions recorded yet</p>
-        <p className="text-sm">Sessions will appear here once the tracker starts capturing snapshots.</p>
+        <p className="text-sm">
+          Sessions will appear here once the tracker starts capturing snapshots and someone plays a
+          match.
+        </p>
       </div>
     );
   }
@@ -107,9 +266,6 @@ export default function Sessions() {
           session.totalDeaths > 0
             ? (session.totalKills / session.totalDeaths).toFixed(2)
             : session.totalKills.toString();
-        const winCount = session.totalWins;
-        const lossCount = session.players.reduce((s, p) => s + p.losses, 0);
-        const result = `${winCount}W / ${lossCount}L`;
 
         return (
           <div
@@ -129,55 +285,29 @@ export default function Sessions() {
                   <div className="text-xs text-text-muted">{timeAgo(session.endTime)}</div>
                 </div>
 
-                {/* Player avatars */}
-                <div className="flex -space-x-2">
-                  {session.players.map((p) => (
-                    <div key={p.playerName} className="relative" title={p.displayName}>
-                      {p.avatar ? (
-                        <Image
-                          src={p.avatar}
-                          alt={p.displayName}
-                          width={28}
-                          height={28}
-                          className="rounded-full border-2 border-bg-card"
-                          unoptimized
-                        />
-                      ) : (
-                        <div className="w-7 h-7 rounded-full bg-border border-2 border-bg-card flex items-center justify-center text-[10px] text-text-muted">
-                          {p.displayName[0]}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="hidden sm:flex gap-1">
-                  {session.players.map((p) => (
-                    <span key={p.playerName} className="text-xs text-text-secondary">
-                      {p.displayName}
-                      {p !== session.players[session.players.length - 1] && ','}
-                    </span>
-                  ))}
+                {/* Player names */}
+                <div className="hidden sm:flex gap-1 text-xs text-text-secondary">
+                  {session.players.join(', ')}
                 </div>
               </div>
 
               <div className="flex items-center gap-6">
                 <div className="text-right">
-                  <div className="text-xs text-text-muted">Matches</div>
+                  <div className="text-xs text-text-muted">Games</div>
                   <div className="text-sm font-bold text-text-primary tabular-nums">
                     {session.totalMatches}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-text-muted">Result</div>
+                  <div className="text-xs text-text-muted">Record</div>
                   <div className="text-sm font-bold tabular-nums">
-                    <span className="text-positive">{winCount}W</span>
+                    <span className="text-positive">{session.totalWins}W</span>
                     <span className="text-text-muted"> / </span>
-                    <span className="text-negative">{lossCount}L</span>
+                    <span className="text-negative">{session.totalLosses}L</span>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-text-muted">Group K/D</div>
+                  <div className="text-xs text-text-muted">K/D</div>
                   <div className="text-sm font-bold text-accent-gold tabular-nums">{groupKd}</div>
                 </div>
                 <div className="text-right hidden sm:block">
@@ -187,129 +317,64 @@ export default function Sessions() {
                   </div>
                 </div>
                 <svg
-                  className={`w-4 h-4 text-text-muted transition-transform ${expanded ? 'rotate-180' : ''}`}
+                  className={`w-4 h-4 text-text-muted transition-transform ${
+                    expanded ? 'rotate-180' : ''
+                  }`}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
                 </svg>
               </div>
             </button>
 
-            {/* Expanded Details */}
+            {/* Expanded: per-game breakdown */}
             {expanded && (
-              <div className="border-t border-border px-5 py-4 space-y-4">
-                {/* Time range */}
-                <div className="text-xs text-text-muted">
-                  {formatTime(session.startTime)} — {formatTime(session.endTime)}
+              <div className="border-t border-border px-5 py-4 space-y-6">
+                {/* Session summary */}
+                <div className="flex items-center justify-between text-xs text-text-muted">
+                  <span>
+                    {formatTime(session.startTime)} — {formatTime(session.endTime)}
+                  </span>
+                  <span>{session.games.length} game{session.games.length !== 1 ? 's' : ''} detected</span>
                 </div>
 
-                {/* Individual player stats */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {session.players.map((p) => (
-                    <div
-                      key={p.playerName}
-                      className="bg-bg-primary rounded-lg p-4 border border-border/50"
-                    >
-                      <div className="flex items-center gap-2 mb-3">
-                        {p.avatar ? (
-                          <Image
-                            src={p.avatar}
-                            alt={p.displayName}
-                            width={32}
-                            height={32}
-                            className="rounded-full"
-                            unoptimized
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-border" />
-                        )}
-                        <div>
-                          <div className="text-sm font-bold text-text-primary">{p.displayName}</div>
-                          <div className="text-[10px] text-text-muted">
-                            {p.matchesDelta} match{p.matchesDelta !== 1 ? 'es' : ''}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Stats grid */}
-                      <div className="grid grid-cols-4 gap-2 mb-3">
-                        <div>
-                          <div className="text-[10px] text-text-muted uppercase">K/D</div>
-                          <div className="text-base font-bold text-accent-gold tabular-nums">
-                            {p.kd.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-text-muted uppercase">Kills</div>
-                          <div className="text-base font-bold text-text-primary tabular-nums">
-                            {p.kills}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-text-muted uppercase">Deaths</div>
-                          <div className="text-base font-bold text-text-primary tabular-nums">
-                            {p.deaths}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-text-muted uppercase">W/L</div>
-                          <div className="text-base font-bold tabular-nums">
-                            <span className="text-positive">{p.wins}</span>
-                            <span className="text-text-muted">/</span>
-                            <span className="text-negative">{p.losses}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Secondary stats */}
-                      <div className="flex gap-3 text-xs text-text-secondary mb-2">
-                        {p.headshotKills > 0 && <span>HS: {p.headshotKills}</span>}
-                        {p.revives > 0 && <span>Revives: {p.revives}</span>}
-                        {p.vehicleKills > 0 && <span>Veh: {p.vehicleKills}</span>}
-                      </div>
-
-                      {/* Weapon deltas */}
-                      {p.weaponDeltas.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {p.weaponDeltas.map((w) => (
-                            <span
-                              key={w.name}
-                              className="text-[10px] bg-bg-card px-2 py-0.5 rounded text-text-secondary"
-                            >
-                              {w.name}: +{w.kills}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                {/* Individual games */}
+                <div className="space-y-6">
+                  {session.games.map((game, i) => (
+                    <GameCard key={game.time} game={game} index={i} />
                   ))}
                 </div>
 
-                {/* Group summary */}
-                {session.players.length > 1 && (
+                {/* Session totals */}
+                {session.games.length > 1 && (
                   <div className="border-t border-border/50 pt-3">
                     <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
-                      Group Totals
+                      Session Totals
                     </div>
                     <div className="flex gap-6 text-sm">
                       <span className="text-text-secondary">
                         Kills: <strong className="text-text-primary">{session.totalKills}</strong>
                       </span>
                       <span className="text-text-secondary">
-                        Deaths: <strong className="text-text-primary">{session.totalDeaths}</strong>
+                        Deaths:{' '}
+                        <strong className="text-text-primary">{session.totalDeaths}</strong>
                       </span>
                       <span className="text-text-secondary">
-                        Group K/D:{' '}
-                        <strong className="text-accent-gold">{groupKd}</strong>
+                        K/D: <strong className="text-accent-gold">{groupKd}</strong>
                       </span>
                       <span className="text-text-secondary">
                         Record:{' '}
                         <strong>
-                          <span className="text-positive">{winCount}W</span>
+                          <span className="text-positive">{session.totalWins}W</span>
                           {' / '}
-                          <span className="text-negative">{lossCount}L</span>
+                          <span className="text-negative">{session.totalLosses}L</span>
                         </strong>
                       </span>
                     </div>
