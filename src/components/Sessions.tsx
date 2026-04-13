@@ -210,6 +210,55 @@ function GameCard({ game, index }: { game: Game; index: number }) {
   );
 }
 
+function ForceTrackingButton() {
+  const [active, setActive] = useState(false);
+  const [activeUntil, setActiveUntil] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/force-tracking')
+      .then((r) => r.json())
+      .then((data) => {
+        setActive(data.active);
+        setActiveUntil(data.activeUntil);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function toggle() {
+    setLoading(true);
+    const res = await fetch('/api/force-tracking', {
+      method: active ? 'DELETE' : 'POST',
+    });
+    const data = await res.json();
+    setActive(data.active);
+    setActiveUntil(data.activeUntil);
+    setLoading(false);
+  }
+
+  if (loading) return null;
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        onClick={toggle}
+        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+          active
+            ? 'bg-positive/10 text-positive border-positive/30 hover:bg-positive/20'
+            : 'text-text-secondary border-border hover:text-text-primary hover:border-border-accent'
+        }`}
+      >
+        {active ? 'Tracking Active' : 'Force Tracking'}
+      </button>
+      {active && activeUntil && (
+        <span className="text-[10px] text-text-muted">
+          until {new Date(activeUntil).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function Sessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,6 +309,9 @@ export default function Sessions() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <ForceTrackingButton />
+      </div>
       {sessions.map((session) => {
         const expanded = expandedId === session.id;
         const groupKd =

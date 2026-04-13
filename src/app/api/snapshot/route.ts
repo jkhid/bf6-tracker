@@ -8,10 +8,46 @@ const FETCH_TIMEOUT_MS = 15000;
 
 export const maxDuration = 30;
 
+/**
+ * Check if current time is within play hours (all times in America/Los_Angeles).
+ * Mon–Thu: 3 PM – 12 AM
+ * Fri–Sun: 8 AM – 1 AM (next day)
+ */
+function isWithinPlayHours(): boolean {
+  const now = new Date();
+  const pacific = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const day = pacific.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+  const hour = pacific.getHours();
+
+  // Friday (5), Saturday (6), Sunday (0): 8 AM – 1 AM next day
+  if (day === 5 || day === 6 || day === 0) {
+    return hour >= 8 || hour < 1;
+  }
+
+  // Mon–Thu: 3 PM – 12 AM
+  return hour >= 15;
+}
+
+async function isOverrideActive(): Promise<boolean> {
+  const { data } = await supabase
+    .from('tracking_override')
+    .select('active_until')
+    .eq('id', 1)
+    .single();
+
+  if (!data?.active_until) return false;
+  return new Date(data.active_until) > new Date();
+}
+
 export async function GET(request: NextRequest) {
   const secret = request.nextUrl.searchParams.get('secret');
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Check play hours — skip if outside window and no manual override
+  if (!isWithinPlayHours() && !(await isOverrideActive())) {
+    return NextResponse.json({ skipped: true, reason: 'Outside play hours' });
   }
 
   const results: { player: string; status: string; error?: string }[] = [];
