@@ -156,11 +156,28 @@ export async function GET(request: NextRequest) {
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: snapshots, error } = await supabase
-    .from('snapshots')
-    .select('*')
-    .gte('captured_at', since)
-    .order('captured_at', { ascending: true });
+  // Supabase defaults to 1000 rows — fetch all snapshots in the window
+  let allSnapshots: Snapshot[] = [];
+  let from = 0;
+  const PAGE_SIZE = 1000;
+  let error = null;
+
+  while (true) {
+    const { data, error: err } = await supabase
+      .from('snapshots')
+      .select('*')
+      .gte('captured_at', since)
+      .order('captured_at', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (err) { error = err; break; }
+    if (!data || data.length === 0) break;
+    allSnapshots = allSnapshots.concat(data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  const snapshots = allSnapshots;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
