@@ -131,7 +131,7 @@ function PlayerGameCard({ player }: { player: PlayerGameDelta }) {
           <div className="text-base font-bold text-text-primary tabular-nums">{player.deaths}</div>
         </div>
         <div>
-          <div className="text-[10px] text-text-muted uppercase">Assists</div>
+          <div className="text-[10px] text-text-muted uppercase">Revives</div>
           <div className="text-base font-bold text-text-primary tabular-nums">
             {player.revives > 0 ? player.revives : '-'}
           </div>

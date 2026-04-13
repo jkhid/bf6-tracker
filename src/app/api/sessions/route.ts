@@ -77,6 +77,10 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 // Merge games within this window into one (handles staggered API updates)
 const GAME_MERGE_MS = 5 * 60 * 1000;
 
+// Display name lookup built once
+const DISPLAY_NAMES = new Map<string, string>();
+for (const p of PLAYERS) DISPLAY_NAMES.set(p.name, p.displayName);
+
 function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
   const weaponsBefore = new Map<string, number>();
   for (const w of before.weapon_stats || []) {
@@ -85,7 +89,10 @@ function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
 
   const deltas: WeaponDelta[] = [];
   for (const w of after.weapon_stats || []) {
-    const beforeKills = weaponsBefore.get(w.name) || 0;
+    // Only include weapons that existed in BOTH snapshots to avoid phantom deltas
+    if (!weaponsBefore.has(w.name)) continue;
+
+    const beforeKills = weaponsBefore.get(w.name)!;
     const delta = w.kills - beforeKills;
     if (delta > 0) {
       deltas.push({
@@ -104,17 +111,12 @@ function buildPlayerDelta(
   before: Snapshot,
   after: Snapshot
 ): PlayerGameDelta {
-  const displayNames = new Map<string, string>();
-  for (const p of PLAYERS) {
-    displayNames.set(p.name, p.displayName);
-  }
-
   const killsDelta = after.kills - before.kills;
   const deathsDelta = after.deaths - before.deaths;
 
   return {
     playerName,
-    displayName: displayNames.get(playerName) || playerName,
+    displayName: DISPLAY_NAMES.get(playerName) || playerName,
     avatar: after.raw_stats?.avatar || '',
     matchesDelta: after.matches_played - before.matches_played,
     kills: killsDelta,
@@ -174,13 +176,7 @@ export async function GET(request: NextRequest) {
       const after = snaps[i];
       const matchesDelta = after.matches_played - before.matches_played;
       if (matchesDelta > 0) {
-        events.push({
-          playerName,
-          time: after.captured_at,
-          before,
-          after,
-          matchesDelta,
-        });
+        events.push({ playerName, time: after.captured_at, before, after, matchesDelta });
       }
     }
   }
@@ -193,42 +189,43 @@ export async function GET(request: NextRequest) {
 
   // Group events into sessions based on time proximity
   const sessionGroups: GameEvent[][] = [];
-  let currentGroup: GameEvent[] = [events[0]];
+  let currentSessionGroup: GameEvent[] = [events[0]];
 
   for (let i = 1; i < events.length; i++) {
     const prevTime = new Date(events[i - 1].time).getTime();
     const currTime = new Date(events[i].time).getTime();
 
     if (currTime - prevTime > SESSION_GAP_MS) {
-      sessionGroups.push(currentGroup);
-      currentGroup = [events[i]];
+      sessionGroups.push(currentSessionGroup);
+      currentSessionGroup = [events[i]];
     } else {
-      currentGroup.push(events[i]);
+      currentSessionGroup.push(events[i]);
     }
   }
-  sessionGroups.push(currentGroup);
+  sessionGroups.push(currentSessionGroup);
 
   // Build sessions with per-game granularity
   const sessions: Session[] = sessionGroups.map((sessionEvents, idx) => {
-    // Group events into games by merging events within GAME_MERGE_MS of each other
-    // This handles staggered API updates where the same match shows up at different snapshot times
     const sortedEvents = [...sessionEvents].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
     );
 
+    // Group events into games using merge window anchored to FIRST event in group
     const gameGroups: GameEvent[][] = [];
     let currentGame: GameEvent[] = [sortedEvents[0]];
 
     for (let i = 1; i < sortedEvents.length; i++) {
-      const prevTime = new Date(sortedEvents[i - 1].time).getTime();
+      const groupStartTime = new Date(currentGame[0].time).getTime();
       const currTime = new Date(sortedEvents[i].time).getTime();
 
-      // If same player appears again within merge window, it's a new game
+      // Split into new game if:
+      // - Time exceeds merge window from the START of current group (not previous event)
+      // - Same player appears again (they played another match)
       const samePlayerInGroup = currentGame.some(
         (e) => e.playerName === sortedEvents[i].playerName
       );
 
-      if (currTime - prevTime > GAME_MERGE_MS || samePlayerInGroup) {
+      if (currTime - groupStartTime > GAME_MERGE_MS || samePlayerInGroup) {
         gameGroups.push(currentGame);
         currentGame = [sortedEvents[i]];
       } else {
@@ -245,7 +242,7 @@ export async function GET(request: NextRequest) {
 
       const kills = players.reduce((s, p) => s + p.kills, 0);
       const deaths = players.reduce((s, p) => s + p.deaths, 0);
-      // Team win = max of any player's win delta (not sum)
+      // Team win = max of any single player's win delta (not sum — 1 team win = 1 win)
       const wins = Math.max(...players.map((p) => p.wins), 0);
       const losses = Math.max(...players.map((p) => p.losses), 0);
       const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
@@ -258,8 +255,6 @@ export async function GET(request: NextRequest) {
 
     // Session totals
     const allPlayers = [...new Set(sessionEvents.map((e) => e.playerName))];
-    const displayNames = new Map<string, string>();
-    for (const p of PLAYERS) displayNames.set(p.name, p.displayName);
 
     const totalKills = games.reduce((s, g) => s + g.kills, 0);
     const totalDeaths = games.reduce((s, g) => s + g.deaths, 0);
@@ -267,12 +262,15 @@ export async function GET(request: NextRequest) {
     const totalLosses = games.reduce((s, g) => s + g.losses, 0);
     const totalMatches = games.reduce((s, g) => s + g.matchCount, 0);
 
+    // Stable session ID based on start time
+    const startMs = new Date(sessionEvents[0].before.captured_at).getTime();
+
     return {
-      id: `session_${idx}`,
+      id: `session_${startMs}`,
       startTime: sessionEvents[0].before.captured_at,
       endTime: sessionEvents[sessionEvents.length - 1].after.captured_at,
       games,
-      players: allPlayers.map((n) => displayNames.get(n) || n),
+      players: allPlayers.map((n) => DISPLAY_NAMES.get(n) || n),
       totalMatches,
       totalKills,
       totalDeaths,

@@ -4,9 +4,11 @@ import { PLAYERS } from '@/lib/players';
 import { findGameMode } from '@/lib/utils';
 
 const GAMETOOLS_BASE = 'https://api.gametools.network/bf6/stats/';
+const FETCH_TIMEOUT_MS = 15000;
+
+export const maxDuration = 30;
 
 export async function GET(request: NextRequest) {
-  // Protect this endpoint with a secret
   const secret = request.nextUrl.searchParams.get('secret');
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -18,8 +20,12 @@ export async function GET(request: NextRequest) {
   await Promise.allSettled(
     PLAYERS.map(async (player) => {
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
         const url = `${GAMETOOLS_BASE}?categories=multiplayer&categories=battleroyale&raw=false&format_values=true&seperation=false&name=${encodeURIComponent(player.name)}&platform=${encodeURIComponent(player.platform)}&skip_battlelog=true`;
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
 
         if (!res.ok) {
           results.push({ player: player.name, status: 'api_error', error: `HTTP ${res.status}` });
@@ -28,7 +34,6 @@ export async function GET(request: NextRequest) {
 
         const stats = await res.json();
 
-        // Get RedSec BR stats
         const redsec = findGameMode(stats.gameModeGroups, 'gm_granitebr')
           || findGameMode(stats.gameModeGroups, 'gm_granite');
 
@@ -37,11 +42,10 @@ export async function GET(request: NextRequest) {
           return;
         }
 
-        // Get top weapon stats for delta tracking
+        // Store ALL weapons with kills > 0 (not just top 15)
+        // This prevents phantom deltas when weapons rotate in/out of a truncated list
         const weapons = (stats.weapons || [])
           .filter((w: { kills: number }) => w.kills > 0)
-          .sort((a: { kills: number }, b: { kills: number }) => b.kills - a.kills)
-          .slice(0, 15)
           .map((w: { weaponName: string; kills: number; damage: number; headshots: string; accuracy: string; image: string; altImage: string }) => ({
             name: w.weaponName,
             kills: w.kills,
@@ -90,8 +94,5 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({
-    capturedAt,
-    results,
-  });
+  return NextResponse.json({ capturedAt, results });
 }
