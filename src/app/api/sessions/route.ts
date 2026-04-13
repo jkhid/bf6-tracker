@@ -23,7 +23,7 @@ interface Snapshot {
   objectives_armed: number;
   objectives_destroyed: number;
   weapon_stats: { name: string; kills: number; damage: number; image?: string; altImage?: string }[];
-  raw_stats: { userName?: string; avatar?: string };
+  raw_stats: { userName?: string; avatar?: string; secondsPlayed?: number };
 }
 
 interface WeaponDelta {
@@ -120,7 +120,17 @@ function buildPlayerDelta(
   const killsDelta = after.kills - before.kills;
   const deathsDelta = after.deaths - before.deaths;
   const weaponDeltas = computeWeaponDeltas(before, after);
-  const damage = weaponDeltas.reduce((s, w) => s + w.damage, 0);
+
+  // Compute RedSec-specific damage from game mode stats: total_damage = dpm * (secondsPlayed / 60)
+  // This is per-mode accurate, unlike global weapon damage which lags behind
+  const beforeTotalDmg = before.dpm * ((before.raw_stats?.secondsPlayed || 0) / 60);
+  const afterTotalDmg = after.dpm * ((after.raw_stats?.secondsPlayed || 0) / 60);
+  let damage = Math.round(afterTotalDmg - beforeTotalDmg);
+
+  // Fallback to weapon damage sum if mode-based damage is unavailable (older snapshots)
+  if (damage <= 0 && (before.raw_stats?.secondsPlayed === undefined || after.raw_stats?.secondsPlayed === undefined)) {
+    damage = weaponDeltas.reduce((s, w) => s + w.damage, 0);
+  }
 
   return {
     playerName,

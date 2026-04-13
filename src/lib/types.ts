@@ -81,6 +81,7 @@ export interface GameModeStat {
   intelPickups: number;
   objectivesDestroyed: number;
   objectivesArmed: number;
+  secondsPlayed: number;
 }
 
 export interface GadgetStat {

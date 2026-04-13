@@ -116,6 +116,7 @@ export async function GET(request: NextRequest) {
             userName: stats.userName,
             avatar: stats.avatar,
             timePlayed: stats.timePlayed,
+            secondsPlayed: redsec.secondsPlayed || 0,
           },
         });
 
