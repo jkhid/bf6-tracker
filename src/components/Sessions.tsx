@@ -6,6 +6,7 @@ import Image from 'next/image';
 interface WeaponDelta {
   name: string;
   kills: number;
+  damage: number;
   image: string;
   altImage: string;
 }
@@ -23,6 +24,7 @@ interface PlayerGameDelta {
   headshotKills: number;
   revives: number;
   vehicleKills: number;
+  damage: number;
   weaponDeltas: WeaponDelta[];
 }
 
@@ -32,6 +34,7 @@ interface Game {
   matchCount: number;
   kills: number;
   deaths: number;
+  damage: number;
   wins: number;
   losses: number;
 }
@@ -65,145 +68,185 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatDamage(dmg: number): string {
+  if (dmg >= 1000) return `${(dmg / 1000).toFixed(1)}k`;
+  return dmg.toString();
+}
+
 function WeaponChip({ weapon }: { weapon: WeaponDelta }) {
   const imgSrc = weapon.altImage || weapon.image;
   return (
-    <div className="flex items-center gap-1.5 bg-bg-card px-2 py-1 rounded border border-border/50">
+    <div className="flex items-center gap-1.5 bg-bg-primary/60 px-2 py-1 rounded border border-border/30">
       {imgSrc ? (
         <Image
           src={imgSrc}
           alt={weapon.name}
           width={28}
           height={14}
-          className="object-contain"
+          className="object-contain opacity-80"
           unoptimized
         />
       ) : (
         <span className="text-[9px] text-text-muted w-7 text-center">?</span>
       )}
-      <span className="text-[11px] text-text-secondary">{weapon.name}</span>
-      <span className="text-[11px] font-bold text-text-primary">+{weapon.kills}</span>
+      <span className="text-[10px] text-text-muted">{weapon.name}</span>
+      <span className="text-[10px] font-bold text-text-primary">+{weapon.kills}</span>
     </div>
   );
 }
 
-function PlayerGameCard({ player }: { player: PlayerGameDelta }) {
+function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: number }) {
+  const isTopKd = rank === 0;
+
   return (
-    <div className="bg-bg-primary rounded-lg p-4 border border-border/50">
-      {/* Player header */}
-      <div className="flex items-center gap-2 mb-3">
-        {player.avatar ? (
-          <Image
-            src={player.avatar}
-            alt={player.displayName}
-            width={32}
-            height={32}
-            className="rounded-full"
-            unoptimized
-          />
-        ) : (
-          <div className="w-8 h-8 rounded-full bg-border flex items-center justify-center text-xs text-text-muted">
-            {player.displayName[0]}
+    <div className="relative overflow-hidden rounded-lg border border-border/40 bg-gradient-to-br from-bg-card to-bg-primary">
+      {/* Accent stripe */}
+      <div className={`absolute top-0 left-0 w-1 h-full ${isTopKd ? 'bg-accent-gold' : 'bg-border-accent'}`} />
+
+      <div className="pl-4 pr-3 py-3">
+        {/* Player header */}
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center gap-2">
+            {player.avatar ? (
+              <Image
+                src={player.avatar}
+                alt={player.displayName}
+                width={28}
+                height={28}
+                className="rounded-full ring-1 ring-border/50"
+                unoptimized
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-border flex items-center justify-center text-[10px] text-text-muted ring-1 ring-border/50">
+                {player.displayName[0]}
+              </div>
+            )}
+            <span className="text-sm font-semibold text-text-primary">{player.displayName}</span>
+            {player.matchesDelta > 1 && (
+              <span className="text-[9px] text-text-muted bg-bg-primary/60 px-1.5 py-0.5 rounded">
+                {player.matchesDelta} matches
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-5 gap-1.5 mb-2.5">
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">K/D</div>
+            <div className="text-sm font-bold text-accent-gold tabular-nums">
+              {player.kd.toFixed(2)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">Kills</div>
+            <div className="text-sm font-bold text-text-primary tabular-nums">{player.kills}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">Deaths</div>
+            <div className="text-sm font-bold text-text-primary tabular-nums">{player.deaths}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">DMG</div>
+            <div className="text-sm font-bold text-info tabular-nums">
+              {player.damage > 0 ? formatDamage(player.damage) : '-'}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">Revives</div>
+            <div className="text-sm font-bold text-text-primary tabular-nums">
+              {player.revives > 0 ? player.revives : '-'}
+            </div>
+          </div>
+        </div>
+
+        {/* Secondary stats */}
+        {(player.headshotKills > 0 || player.vehicleKills > 0) && (
+          <div className="flex gap-3 text-[10px] text-text-muted mb-2">
+            {player.headshotKills > 0 && <span>HS: {player.headshotKills}</span>}
+            {player.vehicleKills > 0 && <span>Vehicles: {player.vehicleKills}</span>}
           </div>
         )}
-        <div>
-          <div className="text-sm font-bold text-text-primary">{player.displayName}</div>
-          {player.matchesDelta > 1 && (
-            <div className="text-[10px] text-text-muted">{player.matchesDelta} matches</div>
-          )}
-        </div>
-      </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-2 mb-3">
-        <div>
-          <div className="text-[10px] text-text-muted uppercase">K/D</div>
-          <div className="text-base font-bold text-accent-gold tabular-nums">
-            {player.kd.toFixed(2)}
+        {/* Weapon deltas */}
+        {player.weaponDeltas.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {player.weaponDeltas.map((w) => (
+              <WeaponChip key={w.name} weapon={w} />
+            ))}
           </div>
-        </div>
-        <div>
-          <div className="text-[10px] text-text-muted uppercase">Kills</div>
-          <div className="text-base font-bold text-text-primary tabular-nums">{player.kills}</div>
-        </div>
-        <div>
-          <div className="text-[10px] text-text-muted uppercase">Deaths</div>
-          <div className="text-base font-bold text-text-primary tabular-nums">{player.deaths}</div>
-        </div>
-        <div>
-          <div className="text-[10px] text-text-muted uppercase">Revives</div>
-          <div className="text-base font-bold text-text-primary tabular-nums">
-            {player.revives > 0 ? player.revives : '-'}
-          </div>
-        </div>
+        )}
       </div>
-
-      {/* Secondary stats */}
-      {(player.headshotKills > 0 || player.vehicleKills > 0) && (
-        <div className="flex gap-3 text-xs text-text-secondary mb-3">
-          {player.headshotKills > 0 && <span>HS: {player.headshotKills}</span>}
-          {player.vehicleKills > 0 && <span>Vehicles: {player.vehicleKills}</span>}
-        </div>
-      )}
-
-      {/* Weapon deltas with icons */}
-      {player.weaponDeltas.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {player.weaponDeltas.map((w) => (
-            <WeaponChip key={w.name} weapon={w} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function GameCard({ game, index }: { game: Game; index: number }) {
+function GameCard({ game, gameNumber, totalGames }: { game: Game; gameNumber: number; totalGames: number }) {
   const isWin = game.wins > 0;
   const groupKd = game.deaths > 0 ? (game.kills / game.deaths).toFixed(2) : game.kills.toString();
 
-  return (
-    <div className="border-l-2 border-border pl-4 ml-2 relative">
-      {/* Timeline dot */}
-      <div
-        className={`absolute -left-[5px] top-1 w-2 h-2 rounded-full ${
-          isWin ? 'bg-positive' : 'bg-negative'
-        }`}
-      />
+  // Sort players by kills descending for ranking
+  const rankedPlayers = [...game.players].sort((a, b) => b.kd - a.kd);
 
-      {/* Game header */}
-      <div className="flex items-center justify-between mb-3">
+  return (
+    <div
+      className={`rounded-xl border overflow-hidden transition-colors ${
+        isWin
+          ? 'border-positive/20 bg-positive/[0.02]'
+          : 'border-negative/20 bg-negative/[0.02]'
+      }`}
+    >
+      {/* Game header bar */}
+      <div
+        className={`px-4 py-2.5 flex items-center justify-between ${
+          isWin
+            ? 'bg-positive/[0.06] border-b border-positive/10'
+            : 'bg-negative/[0.06] border-b border-negative/10'
+        }`}
+      >
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted font-mono">#{gameNumber}</span>
+            <span
+              className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                isWin
+                  ? 'bg-positive/15 text-positive'
+                  : 'bg-negative/15 text-negative'
+              }`}
+            >
+              {isWin ? 'WIN' : 'LOSS'}
+            </span>
+          </div>
           <span className="text-xs text-text-muted">{formatTime(game.time)}</span>
-          <span
-            className={`text-xs font-bold px-2 py-0.5 rounded ${
-              isWin
-                ? 'bg-positive/10 text-positive'
-                : 'bg-negative/10 text-negative'
-            }`}
-          >
-            {isWin ? 'WIN' : 'LOSS'}
-          </span>
           {game.matchCount > 1 && (
-            <span className="text-[10px] text-text-muted">
-              ({game.matchCount} matches combined)
+            <span className="text-[10px] text-text-muted bg-bg-primary/40 px-1.5 py-0.5 rounded">
+              {game.matchCount} matches
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4 text-xs">
-          <span className="text-text-secondary">
-            Kills: <strong className="text-text-primary">{game.kills}</strong>
-          </span>
-          <span className="text-text-secondary">
-            K/D: <strong className="text-accent-gold">{groupKd}</strong>
-          </span>
+
+        <div className="flex items-center gap-5 text-xs">
+          <div className="text-center">
+            <span className="text-text-muted">Kills </span>
+            <span className="font-bold text-text-primary tabular-nums">{game.kills}</span>
+          </div>
+          {game.damage > 0 && (
+            <div className="text-center">
+              <span className="text-text-muted">DMG </span>
+              <span className="font-bold text-info tabular-nums">{formatDamage(game.damage)}</span>
+            </div>
+          )}
+          <div className="text-center">
+            <span className="text-text-muted">K/D </span>
+            <span className="font-bold text-accent-gold tabular-nums">{groupKd}</span>
+          </div>
         </div>
       </div>
 
       {/* Player cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {game.players.map((p) => (
-          <PlayerGameCard key={p.playerName} player={p} />
+      <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        {rankedPlayers.map((p, i) => (
+          <PlayerGameCard key={p.playerName} player={p} rank={i} />
         ))}
       </div>
     </div>
@@ -388,9 +431,9 @@ export default function Sessions() {
 
             {/* Expanded: per-game breakdown */}
             {expanded && (
-              <div className="border-t border-border px-5 py-4 space-y-6">
-                {/* Session summary */}
-                <div className="flex items-center justify-between text-xs text-text-muted">
+              <div className="border-t border-border px-4 py-4 space-y-3">
+                {/* Session summary bar */}
+                <div className="flex items-center justify-between text-xs text-text-muted px-1">
                   <span>
                     {formatTime(session.startTime)} — {formatTime(session.endTime)}
                   </span>
@@ -398,16 +441,21 @@ export default function Sessions() {
                 </div>
 
                 {/* Individual games */}
-                <div className="space-y-6">
+                <div className="space-y-3">
                   {session.games.map((game, i) => (
-                    <GameCard key={game.time} game={game} index={i} />
+                    <GameCard
+                      key={game.time}
+                      game={game}
+                      gameNumber={i + 1}
+                      totalGames={session.games.length}
+                    />
                   ))}
                 </div>
 
                 {/* Session totals */}
                 {session.games.length > 1 && (
-                  <div className="border-t border-border/50 pt-3">
-                    <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
+                  <div className="border-t border-border/50 pt-3 px-1">
+                    <div className="text-[10px] text-text-muted uppercase tracking-widest mb-2">
                       Session Totals
                     </div>
                     <div className="flex gap-6 text-sm">

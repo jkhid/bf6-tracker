@@ -29,6 +29,7 @@ interface Snapshot {
 interface WeaponDelta {
   name: string;
   kills: number;
+  damage: number;
   image: string;
   altImage: string;
 }
@@ -46,6 +47,7 @@ interface PlayerGameDelta {
   headshotKills: number;
   revives: number;
   vehicleKills: number;
+  damage: number;
   weaponDeltas: WeaponDelta[];
 }
 
@@ -55,6 +57,7 @@ interface Game {
   matchCount: number;
   kills: number;
   deaths: number;
+  damage: number;
   wins: number;
   losses: number;
 }
@@ -83,9 +86,9 @@ const DISPLAY_NAMES = new Map<string, string>();
 for (const p of PLAYERS) DISPLAY_NAMES.set(p.name, p.displayName);
 
 function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
-  const weaponsBefore = new Map<string, number>();
+  const weaponsBefore = new Map<string, { kills: number; damage: number }>();
   for (const w of before.weapon_stats || []) {
-    weaponsBefore.set(w.name, w.kills);
+    weaponsBefore.set(w.name, { kills: w.kills, damage: w.damage || 0 });
   }
 
   const deltas: WeaponDelta[] = [];
@@ -93,12 +96,14 @@ function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
     // Only include weapons that existed in BOTH snapshots to avoid phantom deltas
     if (!weaponsBefore.has(w.name)) continue;
 
-    const beforeKills = weaponsBefore.get(w.name)!;
-    const delta = w.kills - beforeKills;
-    if (delta > 0) {
+    const bw = weaponsBefore.get(w.name)!;
+    const killDelta = w.kills - bw.kills;
+    const damageDelta = (w.damage || 0) - bw.damage;
+    if (killDelta > 0 || damageDelta > 0) {
       deltas.push({
         name: w.name,
-        kills: delta,
+        kills: killDelta,
+        damage: damageDelta,
         image: w.image || '',
         altImage: w.altImage || '',
       });
@@ -114,6 +119,8 @@ function buildPlayerDelta(
 ): PlayerGameDelta {
   const killsDelta = after.kills - before.kills;
   const deathsDelta = after.deaths - before.deaths;
+  const weaponDeltas = computeWeaponDeltas(before, after);
+  const damage = weaponDeltas.reduce((s, w) => s + w.damage, 0);
 
   return {
     playerName,
@@ -128,7 +135,8 @@ function buildPlayerDelta(
     headshotKills: after.headshot_kills - before.headshot_kills,
     revives: after.revives - before.revives,
     vehicleKills: after.vehicle_kills - before.vehicle_kills,
-    weaponDeltas: computeWeaponDeltas(before, after).slice(0, 8),
+    damage,
+    weaponDeltas: weaponDeltas.slice(0, 8),
   };
 }
 
@@ -243,13 +251,14 @@ export async function GET(request: NextRequest) {
 
       const kills = players.reduce((s, p) => s + p.kills, 0);
       const deaths = players.reduce((s, p) => s + p.deaths, 0);
+      const damage = players.reduce((s, p) => s + p.damage, 0);
       // Team win = max of any single player's win delta (not sum — 1 team win = 1 win)
       const wins = Math.max(...players.map((p) => p.wins), 0);
       const losses = Math.max(...players.map((p) => p.losses), 0);
       const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
       const time = gameEvents[gameEvents.length - 1].time;
 
-      return { time, players, matchCount, kills, deaths, wins, losses };
+      return { time, players, matchCount, kills, deaths, damage, wins, losses };
     });
 
     games.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
