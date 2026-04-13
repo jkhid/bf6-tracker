@@ -75,7 +75,8 @@ interface Session {
 // Gap between activity to consider it a new session (30 min)
 const SESSION_GAP_MS = 30 * 60 * 1000;
 // Merge games within this window into one (handles staggered API updates)
-const GAME_MERGE_MS = 5 * 60 * 1000;
+// 10 min needed because the same match can update across players over ~10 min
+const GAME_MERGE_MS = 10 * 60 * 1000;
 
 // Display name lookup built once
 const DISPLAY_NAMES = new Map<string, string>();
