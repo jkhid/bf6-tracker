@@ -8,8 +8,17 @@ export async function fetchPlayerStats(
     `/api/player/${encodeURIComponent(name)}?platform=${encodeURIComponent(platform)}`
   );
   if (!res.ok) {
+    let message = `Failed to fetch stats for ${name} (${res.status})`;
     const text = await res.text();
-    throw new Error(text || `Failed to fetch stats for ${name}`);
+    if (text) {
+      try {
+        const data = JSON.parse(text);
+        message = data?.error || text;
+      } catch {
+        message = text;
+      }
+    }
+    throw new Error(message);
   }
   return res.json();
 }

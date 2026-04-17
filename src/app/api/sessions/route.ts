@@ -80,15 +80,75 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 // Merge games within this window into one (handles staggered API updates)
 // API updates for the same match spread ~10 min across players; 11 min covers jitter
 const GAME_MERGE_MS = 11 * 60 * 1000;
+// Reject impossible stat jumps. These usually happen when the stats API changes
+// buckets, backfills old RedSec data, or a baseline snapshot was bad.
+const MAX_MATCHES_PER_EVENT = 20;
+const MAX_KILLS_PER_MATCH = 150;
+const MAX_DEATHS_PER_MATCH = 150;
 
 // Display name lookup built once
 const DISPLAY_NAMES = new Map<string, string>();
 for (const p of PLAYERS) DISPLAY_NAMES.set(p.name, p.displayName);
 
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/,/g, '').replace('%', ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function counterDelta(after: unknown, before: unknown): number {
+  return toNumber(after) - toNumber(before);
+}
+
+function positiveCounterDelta(after: unknown, before: unknown): number {
+  return Math.max(counterDelta(after, before), 0);
+}
+
+function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesDelta: number): boolean {
+  if (!Number.isFinite(matchesDelta) || matchesDelta <= 0) return false;
+  if (matchesDelta > MAX_MATCHES_PER_EVENT) return false;
+
+  const beforeTime = new Date(before.captured_at).getTime();
+  const afterTime = new Date(after.captured_at).getTime();
+  if (!Number.isFinite(beforeTime) || !Number.isFinite(afterTime) || afterTime <= beforeTime) {
+    return false;
+  }
+
+  const killsDelta = counterDelta(after.kills, before.kills);
+  const deathsDelta = counterDelta(after.deaths, before.deaths);
+  const winsDelta = counterDelta(after.wins, before.wins);
+  const lossesDelta = counterDelta(after.losses, before.losses);
+  const revivesDelta = counterDelta(after.revives, before.revives);
+  const headshotDelta = counterDelta(after.headshot_kills, before.headshot_kills);
+  const vehicleKillsDelta = counterDelta(after.vehicle_kills, before.vehicle_kills);
+
+  const trackedDeltas = [
+    killsDelta,
+    deathsDelta,
+    winsDelta,
+    lossesDelta,
+    revivesDelta,
+    headshotDelta,
+    vehicleKillsDelta,
+  ];
+
+  if (trackedDeltas.some((delta) => !Number.isFinite(delta) || delta < 0)) {
+    return false;
+  }
+
+  if (killsDelta > matchesDelta * MAX_KILLS_PER_MATCH) return false;
+  if (deathsDelta > matchesDelta * MAX_DEATHS_PER_MATCH) return false;
+
+  return trackedDeltas.some((delta) => delta > 0);
+}
+
 function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
   const weaponsBefore = new Map<string, { kills: number; damage: number }>();
   for (const w of before.weapon_stats || []) {
-    weaponsBefore.set(w.name, { kills: w.kills, damage: w.damage || 0 });
+    weaponsBefore.set(w.name, { kills: toNumber(w.kills), damage: toNumber(w.damage) });
   }
 
   const deltas: WeaponDelta[] = [];
@@ -97,8 +157,8 @@ function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
     if (!weaponsBefore.has(w.name)) continue;
 
     const bw = weaponsBefore.get(w.name)!;
-    const killDelta = w.kills - bw.kills;
-    const damageDelta = (w.damage || 0) - bw.damage;
+    const killDelta = toNumber(w.kills) - bw.kills;
+    const damageDelta = toNumber(w.damage) - bw.damage;
     if (killDelta > 0 || damageDelta > 0) {
       deltas.push({
         name: w.name,
@@ -117,15 +177,16 @@ function buildPlayerDelta(
   before: Snapshot,
   after: Snapshot
 ): PlayerGameDelta {
-  const killsDelta = after.kills - before.kills;
-  const deathsDelta = after.deaths - before.deaths;
+  const killsDelta = positiveCounterDelta(after.kills, before.kills);
+  const deathsDelta = positiveCounterDelta(after.deaths, before.deaths);
   const weaponDeltas = computeWeaponDeltas(before, after);
 
   // Compute RedSec-specific damage from game mode stats: total_damage = dpm * (secondsPlayed / 60)
   // This is per-mode accurate, unlike global weapon damage which lags behind
-  const beforeTotalDmg = before.dpm * ((before.raw_stats?.secondsPlayed || 0) / 60);
-  const afterTotalDmg = after.dpm * ((after.raw_stats?.secondsPlayed || 0) / 60);
+  const beforeTotalDmg = toNumber(before.dpm) * (toNumber(before.raw_stats?.secondsPlayed) / 60);
+  const afterTotalDmg = toNumber(after.dpm) * (toNumber(after.raw_stats?.secondsPlayed) / 60);
   let damage = Math.round(afterTotalDmg - beforeTotalDmg);
+  if (damage < 0) damage = 0;
 
   // Fallback to weapon damage sum if mode-based damage is unavailable (older snapshots)
   if (damage <= 0 && (before.raw_stats?.secondsPlayed === undefined || after.raw_stats?.secondsPlayed === undefined)) {
@@ -136,15 +197,15 @@ function buildPlayerDelta(
     playerName,
     displayName: DISPLAY_NAMES.get(playerName) || playerName,
     avatar: after.raw_stats?.avatar || '',
-    matchesDelta: after.matches_played - before.matches_played,
+    matchesDelta: positiveCounterDelta(after.matches_played, before.matches_played),
     kills: killsDelta,
     deaths: deathsDelta,
     kd: deathsDelta > 0 ? killsDelta / deathsDelta : killsDelta,
-    wins: after.wins - before.wins,
-    losses: after.losses - before.losses,
-    headshotKills: after.headshot_kills - before.headshot_kills,
-    revives: after.revives - before.revives,
-    vehicleKills: after.vehicle_kills - before.vehicle_kills,
+    wins: positiveCounterDelta(after.wins, before.wins),
+    losses: positiveCounterDelta(after.losses, before.losses),
+    headshotKills: positiveCounterDelta(after.headshot_kills, before.headshot_kills),
+    revives: positiveCounterDelta(after.revives, before.revives),
+    vehicleKills: positiveCounterDelta(after.vehicle_kills, before.vehicle_kills),
     damage,
     weaponDeltas: weaponDeltas.slice(0, 8),
   };
@@ -210,8 +271,8 @@ export async function GET(request: NextRequest) {
     for (let i = 1; i < snaps.length; i++) {
       const before = snaps[i - 1];
       const after = snaps[i];
-      const matchesDelta = after.matches_played - before.matches_played;
-      if (matchesDelta > 0) {
+      const matchesDelta = counterDelta(after.matches_played, before.matches_played);
+      if (isPlausibleGameEvent(before, after, matchesDelta)) {
         events.push({ playerName, time: after.captured_at, before, after, matchesDelta });
       }
     }
@@ -241,7 +302,7 @@ export async function GET(request: NextRequest) {
   sessionGroups.push(currentSessionGroup);
 
   // Build sessions with per-game granularity
-  const sessions: Session[] = sessionGroups.map((sessionEvents, idx) => {
+  const sessions: Session[] = sessionGroups.map((sessionEvents) => {
     const sortedEvents = [...sessionEvents].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
     );
