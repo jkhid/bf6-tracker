@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { PlayerData, GameModeStat } from '@/lib/types';
 import { parsePercentage, formatNumber, cn, findGameMode } from '@/lib/utils';
+import { dicebearUrl } from '@/lib/avatar';
 import { TableSkeleton } from './LoadingSkeleton';
 import Image from 'next/image';
 
@@ -138,18 +139,14 @@ export default function Leaderboard({ playerData }: LeaderboardProps) {
               <td className="py-3 px-2 text-text-muted font-mono text-xs">{i + 1}</td>
               <td className="py-3 px-2">
                 <div className="flex items-center gap-2">
-                  {pd.stats?.avatar ? (
-                    <Image
-                      src={pd.stats.avatar}
-                      alt={pd.stats.userName}
-                      width={28}
-                      height={28}
-                      className="rounded-full"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="w-7 h-7 rounded-full bg-border" />
-                  )}
+                  <Image
+                    src={dicebearUrl(pd.player.name)}
+                    alt={pd.player.displayName}
+                    width={28}
+                    height={28}
+                    className="rounded-full bg-bg-primary"
+                    unoptimized
+                  />
                   <span className="font-medium text-text-primary">{pd.player.displayName}</span>
                   <span className="text-[10px] uppercase text-text-muted bg-bg-primary px-1 py-0.5 rounded">
                     {pd.player.platform === 'xboxseries' ? 'Xbox' : pd.player.platform.toUpperCase()}

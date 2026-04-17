@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { PlayerData, GameModeStat } from '@/lib/types';
 import { parsePercentage, findGameMode } from '@/lib/utils';
+import { dicebearUrl } from '@/lib/avatar';
 import StatBar from './StatBar';
 import ClassChart from './ClassChart';
 import Image from 'next/image';
@@ -87,19 +88,11 @@ export default function HeadToHead({ playerData }: HeadToHeadProps) {
       {/* Avatars */}
       <div className="flex justify-between items-center px-8">
         <div className="flex flex-col items-center gap-2">
-          {playerA.stats?.avatar ? (
-            <Image src={playerA.stats.avatar} alt={nameA} width={56} height={56} className="rounded-full" unoptimized />
-          ) : (
-            <div className="w-14 h-14 rounded-full bg-border" />
-          )}
+          <Image src={dicebearUrl(playerA.player.name)} alt={nameA} width={56} height={56} className="rounded-full bg-bg-primary" unoptimized />
           <span className="text-sm font-bold text-text-primary">{nameA}</span>
         </div>
         <div className="flex flex-col items-center gap-2">
-          {playerB.stats?.avatar ? (
-            <Image src={playerB.stats.avatar} alt={nameB} width={56} height={56} className="rounded-full" unoptimized />
-          ) : (
-            <div className="w-14 h-14 rounded-full bg-border" />
-          )}
+          <Image src={dicebearUrl(playerB.player.name)} alt={nameB} width={56} height={56} className="rounded-full bg-bg-primary" unoptimized />
           <span className="text-sm font-bold text-text-primary">{nameB}</span>
         </div>
       </div>

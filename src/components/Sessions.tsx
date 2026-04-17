@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
+import { dicebearUrl } from '@/lib/avatar';
 
 interface WeaponDelta {
   name: string;
@@ -107,20 +108,14 @@ function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: numbe
         {/* Player header */}
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2">
-            {player.avatar ? (
-              <Image
-                src={player.avatar}
-                alt={player.displayName}
-                width={28}
-                height={28}
-                className="rounded-full ring-1 ring-border/50"
-                unoptimized
-              />
-            ) : (
-              <div className="w-7 h-7 rounded-full bg-border flex items-center justify-center text-[10px] text-text-muted ring-1 ring-border/50">
-                {player.displayName[0]}
-              </div>
-            )}
+            <Image
+              src={dicebearUrl(player.playerName)}
+              alt={player.displayName}
+              width={28}
+              height={28}
+              className="rounded-full ring-1 ring-border/50 bg-bg-primary"
+              unoptimized
+            />
             <span className="text-sm font-semibold text-text-primary">{player.displayName}</span>
             {player.matchesDelta > 1 && (
               <span className="text-[9px] text-text-muted bg-bg-primary/60 px-1.5 py-0.5 rounded">

@@ -2,6 +2,7 @@
 
 import { PlayerData, GameModeStat } from '@/lib/types';
 import { parsePercentage, formatNumber, findGameMode } from '@/lib/utils';
+import { dicebearUrl } from '@/lib/avatar';
 import { CardSkeleton } from './LoadingSkeleton';
 import WeaponRow from './WeaponRow';
 import VehicleRow from './VehicleRow';
@@ -71,18 +72,14 @@ export default function PlayerCard({ data }: PlayerCardProps) {
     <div className="bg-bg-card border border-border rounded-lg overflow-hidden hover:border-border-accent transition-colors">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center gap-3">
-        {stats.avatar ? (
-          <Image
-            src={stats.avatar}
-            alt={stats.userName}
-            width={48}
-            height={48}
-            className="rounded-full"
-            unoptimized
-          />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-border" />
-        )}
+        <Image
+          src={dicebearUrl(data.player.name)}
+          alt={data.player.displayName}
+          width={48}
+          height={48}
+          className="rounded-full bg-bg-primary"
+          unoptimized
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-bold text-text-primary truncate">{data.player.displayName}</h3>
