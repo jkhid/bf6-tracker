@@ -13,5 +13,6 @@ export const PLAYERS: Player[] = [
   { name: 'STATnMELO650', displayName: 'Adi', platform: 'pc' },
   { name: 'CastingC0uch945', displayName: 'Ryan', platform: 'pc' },
   { name: 'nmetzger123', displayName: 'Metz', platform: 'pc' },
+  { name: 'ra1ca', displayName: 'Nathan', platform: 'pc' },
 
 ];
