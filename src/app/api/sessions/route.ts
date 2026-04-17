@@ -1,389 +1,110 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { PLAYERS } from '@/lib/players';
+import {
+  buildGameEventRow,
+  buildSessionsFromEvents,
+  fromSessionSummaryRow,
+  SessionSummaryRow,
+  Snapshot,
+} from '@/lib/session-events';
 
-interface Snapshot {
-  id: number;
-  player_name: string;
-  captured_at: string;
-  matches_played: number;
-  kills: number;
-  deaths: number;
-  wins: number;
-  losses: number;
-  kd: number;
-  kpm: number;
-  dpm: number;
-  headshot_kills: number;
-  revives: number;
-  vehicle_kills: number;
-  intel_pickups: number;
-  spots: number;
-  repairs: number;
-  objectives_armed: number;
-  objectives_destroyed: number;
-  weapon_stats: { name: string; kills: number; damage: number; image?: string; altImage?: string }[];
-  raw_stats: { userName?: string; avatar?: string; secondsPlayed?: number };
-}
+async function loadFromSnapshotFallback(limit: number, offset: number) {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const snapshots: Snapshot[] = [];
 
-interface WeaponDelta {
-  name: string;
-  kills: number;
-  damage: number;
-  image: string;
-  altImage: string;
-}
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('snapshots')
+      .select(`
+        id,
+        player_name,
+        captured_at,
+        matches_played,
+        kills,
+        deaths,
+        wins,
+        losses,
+        kd,
+        kpm,
+        dpm,
+        headshot_kills,
+        revives,
+        vehicle_kills,
+        intel_pickups,
+        spots,
+        repairs,
+        objectives_armed,
+        objectives_destroyed,
+        raw_stats
+      `)
+      .gte('captured_at', since)
+      .order('captured_at', { ascending: true })
+      .range(from, from + 999);
 
-interface PlayerGameDelta {
-  playerName: string;
-  displayName: string;
-  avatar: string;
-  matchesDelta: number;
-  kills: number;
-  deaths: number;
-  kd: number;
-  wins: number;
-  losses: number;
-  headshotKills: number;
-  revives: number;
-  vehicleKills: number;
-  damage: number;
-  weaponDeltas: WeaponDelta[];
-}
-
-interface Game {
-  time: string;
-  players: PlayerGameDelta[];
-  matchCount: number;
-  kills: number;
-  deaths: number;
-  damage: number;
-  wins: number;
-  losses: number;
-}
-
-interface Session {
-  id: string;
-  startTime: string;
-  endTime: string;
-  games: Game[];
-  players: string[];
-  totalMatches: number;
-  totalKills: number;
-  totalDeaths: number;
-  totalWins: number;
-  totalLosses: number;
-}
-
-// Gap between activity to consider it a new session (30 min)
-const SESSION_GAP_MS = 30 * 60 * 1000;
-// Merge games within this window into one (handles staggered API updates)
-// API updates for the same match spread ~10 min across players; 11 min covers jitter
-const GAME_MERGE_MS = 11 * 60 * 1000;
-// Reject impossible stat jumps. These usually happen when the stats API changes
-// buckets, backfills old RedSec data, or a baseline snapshot was bad.
-const MAX_MATCHES_PER_EVENT = 20;
-const MAX_KILLS_PER_MATCH = 150;
-const MAX_DEATHS_PER_MATCH = 150;
-
-// Display name lookup built once
-const DISPLAY_NAMES = new Map<string, string>();
-for (const p of PLAYERS) DISPLAY_NAMES.set(p.name, p.displayName);
-
-function toNumber(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  if (typeof value === 'string') {
-    const parsed = Number(value.replace(/,/g, '').replace('%', ''));
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
-function counterDelta(after: unknown, before: unknown): number {
-  return toNumber(after) - toNumber(before);
-}
-
-function positiveCounterDelta(after: unknown, before: unknown): number {
-  return Math.max(counterDelta(after, before), 0);
-}
-
-function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesDelta: number): boolean {
-  if (!Number.isFinite(matchesDelta) || matchesDelta <= 0) return false;
-  if (matchesDelta > MAX_MATCHES_PER_EVENT) return false;
-
-  const beforeTime = new Date(before.captured_at).getTime();
-  const afterTime = new Date(after.captured_at).getTime();
-  if (!Number.isFinite(beforeTime) || !Number.isFinite(afterTime) || afterTime <= beforeTime) {
-    return false;
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    snapshots.push(...(data as Snapshot[]).map((snapshot) => ({ ...snapshot, weapon_stats: [] })));
+    if (data.length < 1000) break;
   }
 
-  const killsDelta = counterDelta(after.kills, before.kills);
-  const deathsDelta = counterDelta(after.deaths, before.deaths);
-  const winsDelta = counterDelta(after.wins, before.wins);
-  const lossesDelta = counterDelta(after.losses, before.losses);
-  const revivesDelta = counterDelta(after.revives, before.revives);
-  const headshotDelta = counterDelta(after.headshot_kills, before.headshot_kills);
-  const vehicleKillsDelta = counterDelta(after.vehicle_kills, before.vehicle_kills);
-
-  const trackedDeltas = [
-    killsDelta,
-    deathsDelta,
-    winsDelta,
-    lossesDelta,
-    revivesDelta,
-    headshotDelta,
-    vehicleKillsDelta,
-  ];
-
-  if (trackedDeltas.some((delta) => !Number.isFinite(delta) || delta < 0)) {
-    return false;
+  const byPlayer = new Map<string, Snapshot[]>();
+  for (const snapshot of snapshots) {
+    const list = byPlayer.get(snapshot.player_name) || [];
+    list.push(snapshot);
+    byPlayer.set(snapshot.player_name, list);
   }
 
-  if (killsDelta > matchesDelta * MAX_KILLS_PER_MATCH) return false;
-  if (deathsDelta > matchesDelta * MAX_DEATHS_PER_MATCH) return false;
-
-  return trackedDeltas.some((delta) => delta > 0);
-}
-
-function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
-  const weaponsBefore = new Map<string, { kills: number; damage: number }>();
-  for (const w of before.weapon_stats || []) {
-    weaponsBefore.set(w.name, { kills: toNumber(w.kills), damage: toNumber(w.damage) });
-  }
-
-  const deltas: WeaponDelta[] = [];
-  for (const w of after.weapon_stats || []) {
-    // Only include weapons that existed in BOTH snapshots to avoid phantom deltas
-    if (!weaponsBefore.has(w.name)) continue;
-
-    const bw = weaponsBefore.get(w.name)!;
-    const killDelta = toNumber(w.kills) - bw.kills;
-    const damageDelta = toNumber(w.damage) - bw.damage;
-    if (killDelta > 0 || damageDelta > 0) {
-      deltas.push({
-        name: w.name,
-        kills: killDelta,
-        damage: damageDelta,
-        image: w.image || '',
-        altImage: w.altImage || '',
-      });
+  const events = [];
+  for (const [playerName, playerSnapshots] of byPlayer) {
+    for (let i = 1; i < playerSnapshots.length; i++) {
+      const event = buildGameEventRow(playerName, playerSnapshots[i - 1], playerSnapshots[i]);
+      if (event) events.push(event);
     }
   }
-  return deltas.sort((a, b) => b.kills - a.kills);
-}
 
-function buildPlayerDelta(
-  playerName: string,
-  before: Snapshot,
-  after: Snapshot
-): PlayerGameDelta {
-  const killsDelta = positiveCounterDelta(after.kills, before.kills);
-  const deathsDelta = positiveCounterDelta(after.deaths, before.deaths);
-  const weaponDeltas = computeWeaponDeltas(before, after);
-
-  // Compute RedSec-specific damage from game mode stats: total_damage = dpm * (secondsPlayed / 60)
-  // This is per-mode accurate, unlike global weapon damage which lags behind
-  const beforeTotalDmg = toNumber(before.dpm) * (toNumber(before.raw_stats?.secondsPlayed) / 60);
-  const afterTotalDmg = toNumber(after.dpm) * (toNumber(after.raw_stats?.secondsPlayed) / 60);
-  let damage = Math.round(afterTotalDmg - beforeTotalDmg);
-  if (damage < 0) damage = 0;
-
-  // Fallback to weapon damage sum if mode-based damage is unavailable (older snapshots)
-  if (damage <= 0 && (before.raw_stats?.secondsPlayed === undefined || after.raw_stats?.secondsPlayed === undefined)) {
-    damage = weaponDeltas.reduce((s, w) => s + w.damage, 0);
-  }
-
+  const sessions = buildSessionsFromEvents(events).reverse();
   return {
-    playerName,
-    displayName: DISPLAY_NAMES.get(playerName) || playerName,
-    avatar: after.raw_stats?.avatar || '',
-    matchesDelta: positiveCounterDelta(after.matches_played, before.matches_played),
-    kills: killsDelta,
-    deaths: deathsDelta,
-    kd: deathsDelta > 0 ? killsDelta / deathsDelta : killsDelta,
-    wins: positiveCounterDelta(after.wins, before.wins),
-    losses: positiveCounterDelta(after.losses, before.losses),
-    headshotKills: positiveCounterDelta(after.headshot_kills, before.headshot_kills),
-    revives: positiveCounterDelta(after.revives, before.revives),
-    vehicleKills: positiveCounterDelta(after.vehicle_kills, before.vehicle_kills),
-    damage,
-    weaponDeltas: weaponDeltas.slice(0, 8),
+    sessions: sessions.slice(offset, offset + limit),
+    total: sessions.length,
   };
 }
 
 export async function GET(request: NextRequest) {
-  const limit = parseInt(request.nextUrl.searchParams.get('limit') || '20');
-  const offset = parseInt(request.nextUrl.searchParams.get('offset') || '0');
+  const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '20'), 100);
+  const offset = Math.max(parseInt(request.nextUrl.searchParams.get('offset') || '0'), 0);
 
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  // Supabase defaults to 1000 rows — fetch all snapshots in the window
-  let allSnapshots: Snapshot[] = [];
-  let from = 0;
-  const PAGE_SIZE = 1000;
-  let error = null;
-
-  while (true) {
-    const { data, error: err } = await supabase
-      .from('snapshots')
-      .select('*')
-      .gte('captured_at', since)
-      .order('captured_at', { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (err) { error = err; break; }
-    if (!data || data.length === 0) break;
-    allSnapshots = allSnapshots.concat(data);
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-
-  const snapshots = allSnapshots;
+  const { data, error, count } = await supabase
+    .from('session_summaries')
+    .select('*', { count: 'exact' })
+    .order('end_time', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  if (!snapshots || snapshots.length < 2) {
-    return NextResponse.json({ sessions: [], total: 0 });
-  }
-
-  // Group snapshots by player
-  const byPlayer = new Map<string, Snapshot[]>();
-  for (const snap of snapshots) {
-    const list = byPlayer.get(snap.player_name) || [];
-    list.push(snap);
-    byPlayer.set(snap.player_name, list);
-  }
-
-  // Find all "game events" — moments where a player's match count changed
-  interface GameEvent {
-    playerName: string;
-    time: string;
-    before: Snapshot;
-    after: Snapshot;
-    matchesDelta: number;
-  }
-
-  const events: GameEvent[] = [];
-
-  for (const [playerName, snaps] of byPlayer) {
-    for (let i = 1; i < snaps.length; i++) {
-      const before = snaps[i - 1];
-      const after = snaps[i];
-      const matchesDelta = counterDelta(after.matches_played, before.matches_played);
-      if (isPlausibleGameEvent(before, after, matchesDelta)) {
-        events.push({ playerName, time: after.captured_at, before, after, matchesDelta });
-      }
-    }
-  }
-
-  if (events.length === 0) {
-    return NextResponse.json({ sessions: [], total: 0 });
-  }
-
-  events.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-
-  // Group events into sessions based on time proximity
-  const sessionGroups: GameEvent[][] = [];
-  let currentSessionGroup: GameEvent[] = [events[0]];
-
-  for (let i = 1; i < events.length; i++) {
-    const prevTime = new Date(events[i - 1].time).getTime();
-    const currTime = new Date(events[i].time).getTime();
-
-    if (currTime - prevTime > SESSION_GAP_MS) {
-      sessionGroups.push(currentSessionGroup);
-      currentSessionGroup = [events[i]];
-    } else {
-      currentSessionGroup.push(events[i]);
-    }
-  }
-  sessionGroups.push(currentSessionGroup);
-
-  // Build sessions with per-game granularity
-  const sessions: Session[] = sessionGroups.map((sessionEvents) => {
-    const sortedEvents = [...sessionEvents].sort(
-      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
-    );
-
-    // Group events into games using merge window anchored to FIRST event in group
-    const gameGroups: GameEvent[][] = [];
-    let currentGame: GameEvent[] = [sortedEvents[0]];
-
-    for (let i = 1; i < sortedEvents.length; i++) {
-      const groupStartTime = new Date(currentGame[0].time).getTime();
-      const currTime = new Date(sortedEvents[i].time).getTime();
-
-      // Split into new game if:
-      // - Time exceeds merge window from the START of current group (not previous event)
-      // - Same player appears again (they played another match)
-      const samePlayerInGroup = currentGame.some(
-        (e) => e.playerName === sortedEvents[i].playerName
+    try {
+      const fallback = await loadFromSnapshotFallback(limit, offset);
+      return NextResponse.json(fallback, {
+        headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
+      });
+    } catch (fallbackError) {
+      return NextResponse.json(
+        { error: (fallbackError as Error).message || error.message },
+        { status: 500 }
       );
-
-      if (currTime - groupStartTime > GAME_MERGE_MS || samePlayerInGroup) {
-        gameGroups.push(currentGame);
-        currentGame = [sortedEvents[i]];
-      } else {
-        currentGame.push(sortedEvents[i]);
-      }
     }
-    gameGroups.push(currentGame);
+  }
 
-    // Convert game groups to Game objects
-    const games: Game[] = gameGroups.map((gameEvents) => {
-      const players = gameEvents.map((evt) =>
-        buildPlayerDelta(evt.playerName, evt.before, evt.after)
-      );
-
-      const kills = players.reduce((s, p) => s + p.kills, 0);
-      const deaths = players.reduce((s, p) => s + p.deaths, 0);
-      const damage = players.reduce((s, p) => s + p.damage, 0);
-      // Team win = max of any single player's win delta (not sum — 1 team win = 1 win)
-      const wins = Math.max(...players.map((p) => p.wins), 0);
-      const losses = Math.max(...players.map((p) => p.losses), 0);
-      const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
-      const time = gameEvents[gameEvents.length - 1].time;
-
-      return { time, players, matchCount, kills, deaths, damage, wins, losses };
+  if ((!data || data.length === 0) && offset === 0) {
+    const fallback = await loadFromSnapshotFallback(limit, offset);
+    return NextResponse.json(fallback, {
+      headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
     });
-
-    games.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-
-    // Session totals
-    const allPlayers = [...new Set(sessionEvents.map((e) => e.playerName))];
-
-    const totalKills = games.reduce((s, g) => s + g.kills, 0);
-    const totalDeaths = games.reduce((s, g) => s + g.deaths, 0);
-    const totalWins = games.reduce((s, g) => s + g.wins, 0);
-    const totalLosses = games.reduce((s, g) => s + g.losses, 0);
-    const totalMatches = games.reduce((s, g) => s + g.matchCount, 0);
-
-    // Stable session ID based on start time
-    const startMs = new Date(sessionEvents[0].before.captured_at).getTime();
-
-    return {
-      id: `session_${startMs}`,
-      startTime: sessionEvents[0].before.captured_at,
-      endTime: sessionEvents[sessionEvents.length - 1].after.captured_at,
-      games,
-      players: allPlayers.map((n) => DISPLAY_NAMES.get(n) || n),
-      totalMatches,
-      totalKills,
-      totalDeaths,
-      totalWins,
-      totalLosses,
-    };
-  });
-
-  sessions.reverse();
-
-  const total = sessions.length;
-  const paginated = sessions.slice(offset, offset + limit);
+  }
 
   return NextResponse.json(
-    { sessions: paginated, total },
+    {
+      sessions: ((data || []) as SessionSummaryRow[]).map(fromSessionSummaryRow),
+      total: count || 0,
+    },
     { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' } }
   );
 }

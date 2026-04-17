@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { PLAYERS } from '@/lib/players';
 import { findGameMode } from '@/lib/utils';
+import { buildGameEventRow, refreshSessionSummaries, Snapshot } from '@/lib/session-events';
 
 const GAMETOOLS_BASE = 'https://api.gametools.network/bf6/stats/';
 const FETCH_TIMEOUT_MS = 15000;
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
 
   const results: { player: string; status: string; error?: string }[] = [];
   const capturedAt = new Date().toISOString();
+  let gameEventsCreated = 0;
 
   await Promise.allSettled(
     PLAYERS.map(async (player) => {
@@ -92,7 +94,16 @@ export async function GET(request: NextRequest) {
             altImage: w.altImage || '',
           }));
 
-        const { error } = await supabase.from('snapshots').insert({
+        const { data: previousSnapshot } = await supabase
+          .from('snapshots')
+          .select('*')
+          .eq('player_name', player.name)
+          .lt('captured_at', capturedAt)
+          .order('captured_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const { data: snapshot, error } = await supabase.from('snapshots').insert({
           player_name: player.name,
           captured_at: capturedAt,
           matches_played: redsec.matches || 0,
@@ -118,11 +129,38 @@ export async function GET(request: NextRequest) {
             timePlayed: stats.timePlayed,
             secondsPlayed: redsec.secondsPlayed || 0,
           },
-        });
+        }).select('*').single();
 
         if (error) {
           results.push({ player: player.name, status: 'db_error', error: error.message });
         } else {
+          if (previousSnapshot && snapshot) {
+            const gameEvent = buildGameEventRow(
+              player.name,
+              previousSnapshot as Snapshot,
+              snapshot as Snapshot
+            );
+
+            if (gameEvent) {
+              const { error: eventError } = await supabase
+                .from('game_events')
+                .upsert(gameEvent, {
+                  onConflict: 'player_name,before_snapshot_id,after_snapshot_id',
+                });
+
+              if (eventError) {
+                results.push({
+                  player: player.name,
+                  status: 'event_error',
+                  error: eventError.message,
+                });
+                return;
+              }
+
+              gameEventsCreated += 1;
+            }
+          }
+
           results.push({ player: player.name, status: 'ok' });
         }
       } catch (e) {
@@ -131,5 +169,10 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({ capturedAt, results });
+  let sessionRefresh: { sessions: number; error?: string } | null = null;
+  if (gameEventsCreated > 0) {
+    sessionRefresh = await refreshSessionSummaries();
+  }
+
+  return NextResponse.json({ capturedAt, results, gameEventsCreated, sessionRefresh });
 }
