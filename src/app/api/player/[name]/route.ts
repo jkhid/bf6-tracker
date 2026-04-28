@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { toGametoolsPlatform } from '@/lib/avatar';
 
 const GAMETOOLS_BASE = 'https://api.gametools.network/bf6/stats/';
 const FETCH_TIMEOUT_MS = 15000;
@@ -42,7 +43,7 @@ export async function GET(
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params;
-  const platform = request.nextUrl.searchParams.get('platform') || 'pc';
+  const platform = toGametoolsPlatform(request.nextUrl.searchParams.get('platform') || 'pc');
 
   const url = `${GAMETOOLS_BASE}?categories=multiplayer&categories=battleroyale&raw=false&format_values=true&seperation=false&name=${encodeURIComponent(name)}&platform=${encodeURIComponent(platform)}&skip_battlelog=true`;
 
