@@ -84,7 +84,7 @@ export default function PlayerCard({ data }: PlayerCardProps) {
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-bold text-text-primary truncate">{data.player.displayName}</h3>
             <span className="text-[10px] uppercase text-text-muted bg-bg-primary px-1.5 py-0.5 rounded flex-shrink-0">
-              {data.player.platform === 'xboxseries' ? 'Xbox' : data.player.platform.toUpperCase()}
+              {data.player.platform === 'xbox' ? 'Xbox' : data.player.platform.toUpperCase()}
             </span>
           </div>
           <div className="flex gap-3 text-xs text-text-secondary">

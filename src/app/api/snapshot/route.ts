@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { PLAYERS } from '@/lib/players';
 import { findGameMode } from '@/lib/utils';
-import { toGametoolsPlatform } from '@/lib/avatar';
 import { buildGameEventRow, refreshSessionSummaries, Snapshot } from '@/lib/session-events';
 
 const GAMETOOLS_BASE = 'https://api.gametools.network/bf6/stats/';
@@ -62,7 +61,7 @@ export async function GET(request: NextRequest) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-        const url = `${GAMETOOLS_BASE}?categories=multiplayer&categories=battleroyale&raw=false&format_values=true&seperation=false&name=${encodeURIComponent(player.name)}&platform=${encodeURIComponent(toGametoolsPlatform(player.platform))}&skip_battlelog=true`;
+        const url = `${GAMETOOLS_BASE}?categories=multiplayer&categories=battleroyale&raw=false&format_values=true&seperation=false&name=${encodeURIComponent(player.name)}&platform=${encodeURIComponent(player.platform)}&skip_battlelog=true`;
         const res = await fetch(url, { signal: controller.signal });
         clearTimeout(timeout);
 

@@ -149,7 +149,7 @@ export default function Leaderboard({ playerData }: LeaderboardProps) {
                   />
                   <span className="font-medium text-text-primary">{pd.player.displayName}</span>
                   <span className="text-[10px] uppercase text-text-muted bg-bg-primary px-1 py-0.5 rounded">
-                    {pd.player.platform === 'xboxseries' ? 'Xbox' : pd.player.platform.toUpperCase()}
+                    {pd.player.platform === 'xbox' ? 'Xbox' : pd.player.platform.toUpperCase()}
                   </span>
                 </div>
               </td>

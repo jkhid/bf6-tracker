@@ -1,7 +1,7 @@
 export interface Player {
   name: string;
   displayName: string;
-  platform: 'pc' | 'ps5' | 'xboxseries';
+  platform: 'ea' | 'steam' | 'epic' | 'psn' | 'xbox';
 }
 
 export interface WeaponStat {
