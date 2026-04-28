@@ -91,6 +91,7 @@ export interface GameEventRow {
   revives: number;
   vehicle_kills: number;
   damage: number;
+  seconds_delta: number;
   avatar: string;
   weapon_deltas: WeaponDelta[];
 }
@@ -212,6 +213,11 @@ export function buildGameEventRow(playerName: string, before: Snapshot, after: S
     damage = weaponDeltas.reduce((s, w) => s + w.damage, 0);
   }
 
+  const secondsDelta = positiveCounterDelta(
+    after.raw_stats?.secondsPlayed,
+    before.raw_stats?.secondsPlayed
+  );
+
   return {
     player_name: playerName,
     event_time: after.captured_at,
@@ -228,6 +234,7 @@ export function buildGameEventRow(playerName: string, before: Snapshot, after: S
     revives: positiveCounterDelta(after.revives, before.revives),
     vehicle_kills: positiveCounterDelta(after.vehicle_kills, before.vehicle_kills),
     damage: Math.max(damage, 0),
+    seconds_delta: Math.round(secondsDelta),
     avatar: after.raw_stats?.avatar || '',
     weapon_deltas: weaponDeltas.slice(0, 8),
   };
@@ -283,24 +290,45 @@ export function buildSessionsFromEvents(rawEvents: GameEventRow[]): Session[] {
       (a, b) => new Date(a.event_time).getTime() - new Date(b.event_time).getTime()
     );
 
-    const gameGroups: GameEventRow[][] = [];
-    let currentGame: GameEventRow[] = [sortedEvents[0]];
+    // Time-bucket events into 11-min windows
+    const timeGroups: GameEventRow[][] = [];
+    let currentBucket: GameEventRow[] = [sortedEvents[0]];
 
     for (let i = 1; i < sortedEvents.length; i++) {
-      const groupStartTime = new Date(currentGame[0].event_time).getTime();
+      const groupStartTime = new Date(currentBucket[0].event_time).getTime();
       const currTime = new Date(sortedEvents[i].event_time).getTime();
-      const samePlayerInGroup = currentGame.some(
-        (event) => event.player_name === sortedEvents[i].player_name
-      );
 
-      if (currTime - groupStartTime > GAME_MERGE_MS || samePlayerInGroup) {
-        gameGroups.push(currentGame);
-        currentGame = [sortedEvents[i]];
+      if (currTime - groupStartTime > GAME_MERGE_MS) {
+        timeGroups.push(currentBucket);
+        currentBucket = [sortedEvents[i]];
       } else {
-        currentGame.push(sortedEvents[i]);
+        currentBucket.push(sortedEvents[i]);
       }
     }
-    gameGroups.push(currentGame);
+    timeGroups.push(currentBucket);
+
+    // Within each time bucket, partition by secondsDelta to detect squads.
+    // Squadmates have identical match durations to the second; ±2s tolerance covers any rounding.
+    const SQUAD_DELTA_TOLERANCE = 2;
+    const gameGroups: GameEventRow[][] = [];
+    for (const bucket of timeGroups) {
+      const buckets: { key: number; events: GameEventRow[] }[] = [];
+      for (const event of bucket) {
+        const delta = event.seconds_delta || 0;
+        // Legacy events with no secondsDelta (=0) fall back to one bucket per player to avoid false merging
+        if (delta === 0) {
+          gameGroups.push([event]);
+          continue;
+        }
+        const existing = buckets.find((b) => Math.abs(b.key - delta) <= SQUAD_DELTA_TOLERANCE);
+        if (existing) {
+          existing.events.push(event);
+        } else {
+          buckets.push({ key: delta, events: [event] });
+        }
+      }
+      for (const b of buckets) gameGroups.push(b.events);
+    }
 
     const games: Game[] = gameGroups.map((gameEvents) => {
       const players = gameEvents.map(buildPlayerDeltaFromEvent);
@@ -314,6 +342,9 @@ export function buildSessionsFromEvents(rawEvents: GameEventRow[]): Session[] {
 
       return { time, players, matchCount, kills, deaths, damage, wins, losses };
     });
+
+    // Most recent game first within a session
+    games.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
     const allPlayers = [...new Set(sessionEvents.map((event) => event.player_name))];
     const startMs = new Date(sortedEvents[0].before_captured_at).getTime();
