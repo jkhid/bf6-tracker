@@ -9,7 +9,7 @@ import { Player } from './types';
 export const PLAYERS: Player[] = [
   { name: 'redFrog40', displayName: 'Nic', platform: 'steam' },
   { name: 'magicpinoy650', displayName: 'Jamal', platform: 'ea' },
-  { name: 'JmXxStealth', displayName: 'Jai', platform: 'ea' },      // username may be wrong — not found in gametools
+  { name: 'jaimehra2000', displayName: 'Jai', platform: 'ea' },
   { name: 'STATnMELO650', displayName: 'Adi', platform: 'ea' },
   { name: 'CastingC0uch945', displayName: 'Ryan', platform: 'ea' }, // username may be wrong — not found in gametools
   { name: 'nmetzger123', displayName: 'Metz', platform: 'ea' },

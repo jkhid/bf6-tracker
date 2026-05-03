@@ -290,44 +290,81 @@ export function buildSessionsFromEvents(rawEvents: GameEventRow[]): Session[] {
       (a, b) => new Date(a.event_time).getTime() - new Date(b.event_time).getTime()
     );
 
-    // Time-bucket events into 11-min windows
-    const timeGroups: GameEventRow[][] = [];
-    let currentBucket: GameEventRow[] = [sortedEvents[0]];
+    // Cluster events into squad-games by secondsDelta proximity + time window.
+    // Squadmates' match durations cluster within ~25s of each other (variance from
+    // staggered deaths, revives, snapshot lag). The time window prevents two unrelated
+    // games of similar duration from merging. Squad cap (4) catches false-merges where
+    // two simultaneous squads both played similar-length matches.
+    const SQUAD_DELTA_TOLERANCE = 25;
+    const SQUAD_TIME_WINDOW_MS = 12 * 60 * 1000;
+    const SQUAD_MAX_PLAYERS = 4;
 
-    for (let i = 1; i < sortedEvents.length; i++) {
-      const groupStartTime = new Date(currentBucket[0].event_time).getTime();
-      const currTime = new Date(sortedEvents[i].event_time).getTime();
+    type SquadCluster = { events: GameEventRow[]; lastTime: number };
+    const squadGames: SquadCluster[] = [];
 
-      if (currTime - groupStartTime > GAME_MERGE_MS) {
-        timeGroups.push(currentBucket);
-        currentBucket = [sortedEvents[i]];
+    function maxDiff(cluster: SquadCluster, delta: number): number {
+      let max = 0;
+      for (const e of cluster.events) {
+        const d = Math.abs((e.seconds_delta || 0) - delta);
+        if (d > max) max = d;
+      }
+      return max;
+    }
+
+    for (const event of sortedEvents) {
+      const eventTime = new Date(event.event_time).getTime();
+      const delta = event.seconds_delta || 0;
+
+      // Legacy events with no secondsDelta — give each its own slot to avoid false merging
+      if (delta === 0) {
+        squadGames.push({ events: [event], lastTime: eventTime });
+        continue;
+      }
+
+      let bestMatch: SquadCluster | null = null;
+      let bestDiff = Infinity;
+      for (const sg of squadGames) {
+        if (eventTime - sg.lastTime > SQUAD_TIME_WINDOW_MS) continue;
+        if (sg.events.some((e) => e.player_name === event.player_name)) continue;
+        if ((sg.events[0].seconds_delta || 0) === 0) continue;
+        const diff = maxDiff(sg, delta);
+        if (diff <= SQUAD_DELTA_TOLERANCE && diff < bestDiff) {
+          bestMatch = sg;
+          bestDiff = diff;
+        }
+      }
+
+      if (bestMatch) {
+        bestMatch.events.push(event);
+        bestMatch.lastTime = eventTime;
       } else {
-        currentBucket.push(sortedEvents[i]);
+        squadGames.push({ events: [event], lastTime: eventTime });
       }
     }
-    timeGroups.push(currentBucket);
 
-    // Within each time bucket, partition by secondsDelta to detect squads.
-    // Squadmates have identical match durations to the second; ±2s tolerance covers any rounding.
-    const SQUAD_DELTA_TOLERANCE = 2;
-    const gameGroups: GameEventRow[][] = [];
-    for (const bucket of timeGroups) {
-      const buckets: { key: number; events: GameEventRow[] }[] = [];
-      for (const event of bucket) {
-        const delta = event.seconds_delta || 0;
-        // Legacy events with no secondsDelta (=0) fall back to one bucket per player to avoid false merging
-        if (delta === 0) {
-          gameGroups.push([event]);
-          continue;
-        }
-        const existing = buckets.find((b) => Math.abs(b.key - delta) <= SQUAD_DELTA_TOLERANCE);
-        if (existing) {
-          existing.events.push(event);
-        } else {
-          buckets.push({ key: delta, events: [event] });
+    // Split oversized clusters (>4 players) at their largest internal secondsDelta gap.
+    // BF6 squads cap at 4, so anything bigger is two squads' matches that happened to
+    // have similar durations.
+    function splitOversizedSquad(events: GameEventRow[]): GameEventRow[][] {
+      if (events.length <= SQUAD_MAX_PLAYERS) return [events];
+      const sorted = [...events].sort((a, b) => (a.seconds_delta || 0) - (b.seconds_delta || 0));
+      let maxGapIdx = 1;
+      let maxGap = -1;
+      for (let i = 1; i < sorted.length; i++) {
+        const gap = (sorted[i].seconds_delta || 0) - (sorted[i - 1].seconds_delta || 0);
+        if (gap > maxGap) {
+          maxGap = gap;
+          maxGapIdx = i;
         }
       }
-      for (const b of buckets) gameGroups.push(b.events);
+      const left = sorted.slice(0, maxGapIdx);
+      const right = sorted.slice(maxGapIdx);
+      return [...splitOversizedSquad(left), ...splitOversizedSquad(right)];
+    }
+
+    const gameGroups: GameEventRow[][] = [];
+    for (const sg of squadGames) {
+      gameGroups.push(...splitOversizedSquad(sg.events));
     }
 
     const games: Game[] = gameGroups.map((gameEvents) => {
