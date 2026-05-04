@@ -11,10 +11,16 @@
   --color-text-muted: #64748b;
   --color-accent-gold: #f59e0b;
   --color-accent-amber: #d97706;
+  --color-tactical-orange: #ff6b1a;
+  --color-tactical-rust: #c84515;
+  --color-tactical-olive: #8a8f5c;
+  --color-tactical-bone: #d8c8a8;
   --color-positive: #22c55e;
   --color-negative: #ef4444;
   --color-info: #3b82f6;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: var(--font-plex), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-anton), 'Impact', sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
 }
 
 :root {
@@ -55,4 +61,84 @@ body {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: 4px;
+}
+
+/* === RECON BRIEFING utilities === */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Hairline tactical grid backdrop */
+.recon-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 107, 26, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 107, 26, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Grain overlay using SVG noise */
+.recon-grain {
+  position: relative;
+}
+.recon-grain::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/></svg>");
+}
+
+/* Classification stamp — bordered, slightly rotated, all-caps */
+.stamp {
+  border: 2px solid currentColor;
+  padding: 2px 8px;
+  display: inline-block;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+}
+
+/* Diagonal hatching used as endcaps */
+.hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 107, 26, 0.18) 0,
+    rgba(255, 107, 26, 0.18) 2px,
+    transparent 2px,
+    transparent 6px
+  );
+}
+
+/* Reveal-on-mount animation */
+@keyframes recon-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.recon-reveal {
+  animation: recon-reveal 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Telemetry scan sweep on highlighted rows */
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(200%); }
+}
+.scan-line {
+  position: relative;
+  overflow: hidden;
+}
+.scan-line::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, transparent, rgba(255,107,26,0.16), transparent);
+  animation: scan 2.6s linear infinite;
+  pointer-events: none;
 }
