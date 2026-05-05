@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { PLAYERS } from '@/lib/players';
+import { getTrackedPlayers } from '@/lib/player-store';
 import { findGameMode } from '@/lib/utils';
 import { buildGameEventRow, refreshSessionSummaries, Snapshot } from '@/lib/session-events';
 
@@ -54,9 +54,10 @@ export async function GET(request: NextRequest) {
   const results: { player: string; status: string; error?: string }[] = [];
   const capturedAt = new Date().toISOString();
   let gameEventsCreated = 0;
+  const players = await getTrackedPlayers();
 
   await Promise.allSettled(
-    PLAYERS.map(async (player) => {
+    players.map(async (player) => {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

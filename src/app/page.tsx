@@ -9,6 +9,7 @@ import HeadToHead from '@/components/HeadToHead';
 import WeaponMeta from '@/components/WeaponMeta';
 import Sessions from '@/components/Sessions';
 import Arsenal from '@/components/Arsenal';
+import AddPlayerButton from '@/components/AddPlayerButton';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -17,13 +18,13 @@ const TABS = [
   { id: 'players', label: 'Player Cards', icon: '👤' },
   { id: 'h2h', label: 'Head-to-Head', icon: '⚔️' },
   { id: 'weapons', label: 'Weapon Meta', icon: '🔫' },
-  { id: 'arsenal', label: 'Arsenal', icon: '🎯' },
+  { id: 'arsenal', label: 'Weapon Stats', icon: '🎯' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
 export default function Home() {
-  const { players } = usePlayers();
+  const { players, loading: playersLoading, error: playersError, addPlayer } = usePlayers();
   const { allPlayerData, refresh } = usePlayerStats(players);
   const [activeTab, setActiveTab] = useState<TabId>('leaderboard');
 
@@ -38,12 +39,15 @@ export default function Home() {
                 BF6 <span className="text-accent-gold">RedSec</span> Tracker
               </h1>
             </div>
-            <button
-              onClick={refresh}
-              className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary border border-border rounded-lg hover:border-border-accent transition-colors"
-            >
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <AddPlayerButton onAddPlayer={addPlayer} onAdded={refresh} />
+              <button
+                onClick={refresh}
+                className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary border border-border rounded-lg hover:border-border-accent transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -73,6 +77,16 @@ export default function Home() {
 
       {/* Content */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+        {playersError && (
+          <div className="mb-4 rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-negative">
+            {playersError}
+          </div>
+        )}
+
+        {playersLoading && (
+          <div className="mb-4 text-sm text-text-muted">Loading tracked players...</div>
+        )}
+
         {activeTab === 'leaderboard' && <Leaderboard playerData={allPlayerData} />}
 
         {activeTab === 'sessions' && <Sessions />}

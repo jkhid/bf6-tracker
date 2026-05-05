@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Player, PlayerStats, PlayerData } from '@/lib/types';
+import { Player, PlayerData } from '@/lib/types';
 import { fetchPlayerStats } from '@/lib/api';
 
 export function usePlayerStats(players: Player[]) {

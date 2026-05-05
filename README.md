@@ -16,6 +16,15 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Player Roster
+
+The tracked player list is stored in Supabase so players can be added from the app without a redeploy.
+
+1. Run `supabase-players.sql` in the Supabase SQL editor once.
+2. Use the `+ Add Player` button in the app header to add a username, display name, and platform.
+
+If the `players` table does not exist yet, the app falls back to the source roster in `src/lib/players.ts`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
