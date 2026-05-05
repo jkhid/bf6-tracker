@@ -4,7 +4,7 @@ const WEAPON_STATS_URL = 'https://api.codmunity.gg/weapon-stats';
 const ATTACHMENT_STATS_URL = 'https://api.codmunity.gg/attachment-stats';
 
 interface DamageEntry {
-  dropoff: number;
+  dropoff?: number;
   base_rpm: number;
   final_rpm: number;
   head: number;
@@ -37,6 +37,7 @@ interface RawWeapon {
   mobility?: number;
   precision?: number;
   hsmultiplier?: number;
+  obd?: number;
   simple_damage?: DamageEntry[];
 }
 
@@ -47,6 +48,8 @@ interface RawAttachment {
   gun: string;
   game: string;
   type: string;
+  range_mod?: number;
+  new_dp?: string | null;
   [key: string]: unknown;
 }
 
@@ -65,6 +68,7 @@ export interface Weapon {
   mobility: number;
   precision: number;
   headshotMultiplier: number;
+  obd: number;
   damage: DamageEntry[];
 }
 
@@ -73,6 +77,14 @@ export interface AttachmentMod {
   name: string;
   slot: string;
   mods: Record<string, number>;
+  rangeMod: number | null;
+  damageProfile: DamageEntry[] | null;
+}
+
+function normalizeDamage(damage: DamageEntry[] | undefined): DamageEntry[] {
+  return (damage ?? [])
+    .map((d) => ({ ...d, dropoff: d.dropoff ?? 0 }))
+    .sort((a, b) => (a.dropoff ?? 0) - (b.dropoff ?? 0));
 }
 
 function pruneAttachment(a: RawAttachment): AttachmentMod {
@@ -82,11 +94,24 @@ function pruneAttachment(a: RawAttachment): AttachmentMod {
       mods[key] = value;
     }
   }
+
+  let damageProfile: DamageEntry[] | null = null;
+  if (a.new_dp) {
+    try {
+      const parsed = JSON.parse(a.new_dp);
+      if (Array.isArray(parsed)) damageProfile = normalizeDamage(parsed);
+    } catch {
+      damageProfile = null;
+    }
+  }
+
   return {
     id: a._id,
     name: a.attachment,
     slot: a.slot,
     mods,
+    rangeMod: typeof a.range_mod === 'number' && a.range_mod !== 1 ? a.range_mod : null,
+    damageProfile,
   };
 }
 
@@ -106,7 +131,8 @@ function normalize(w: RawWeapon): Weapon {
     mobility: w.mobility ?? 0,
     precision: w.precision ?? 0,
     headshotMultiplier: w.hsmultiplier ?? 1,
-    damage: (w.simple_damage ?? []).map((d) => ({ ...d })).sort((a, b) => a.dropoff - b.dropoff),
+    obd: w.obd ?? 0,
+    damage: normalizeDamage(w.simple_damage),
   };
 }
 
@@ -130,13 +156,13 @@ export async function GET() {
     const rawAttachments: RawAttachment[] = await attachmentsRes.json();
 
     const weapons = rawWeapons
-      .filter((w) => w.game === 'BF6-BR' || w.game === 'BF6')
+      .filter((w) => w.game === 'BF6-BR')
       .map(normalize)
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const attachmentsByWeapon: Record<string, AttachmentMod[]> = {};
     for (const a of rawAttachments) {
-      if (a.game !== 'BF6' && a.game !== 'BF6-BR') continue;
+      if (a.game !== 'BF6-BR') continue;
       const list = attachmentsByWeapon[a.gun] ?? (attachmentsByWeapon[a.gun] = []);
       list.push(pruneAttachment(a));
     }
