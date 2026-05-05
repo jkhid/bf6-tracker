@@ -55,21 +55,30 @@ interface AttachmentMod {
 }
 
 const RANGE_BANDS = [
-  { id: 'cqc', label: '0–10 M', short: 'CQC', maxDistance: 10 },
-  { id: 'short', label: '10–40 M', short: 'SHORT', maxDistance: 40 },
-  { id: 'mid', label: '40–80 M', short: 'MID', maxDistance: 80 },
-  { id: 'long', label: '80–120 M', short: 'LONG', maxDistance: 120 },
+  { id: 'cqc', label: '0–10m', maxDistance: 10 },
+  { id: 'short', label: '10m–40m', maxDistance: 40 },
+  { id: 'mid', label: '40m–80m', maxDistance: 80 },
+  { id: 'long', label: '80m–120m', maxDistance: 120 },
 ] as const;
 
-const CATEGORIES = ['ALL', 'Assault Rifle', 'SMG', 'Carbine', 'DMR', 'LMG', 'Sniper Rifle', 'Pistol', 'Shotgun'];
+const CATEGORIES = ['Assault Rifle', 'SMG', 'Carbine', 'DMR', 'LMG', 'Sniper Rifle', 'Pistol', 'Shotgun'];
 
-const COMPARE_PALETTE = ['#ff6b1a', '#d8c8a8', '#8a8f5c', '#3b82f6', '#22c55e'];
+// One stripe color per category — left edge accent
+const CATEGORY_STRIPE: Record<string, string> = {
+  'Assault Rifle': '#f97316',
+  'SMG': '#eab308',
+  'Carbine': '#84cc16',
+  'DMR': '#22d3ee',
+  'LMG': '#a855f7',
+  'Sniper Rifle': '#ef4444',
+  'Pistol': '#94a3b8',
+  'Shotgun': '#f59e0b',
+};
 
-type SortKey = 'ttk' | 'rpm' | 'magSize' | 'mobility' | 'control';
+const COMPARE_PALETTE = ['#f97316', '#eab308', '#22d3ee', '#a855f7', '#22c55e'];
 
 function ttkAtDistance(weapon: Weapon, distance: number): number | null {
   if (!weapon.damage || weapon.damage.length === 0) return null;
-  // Find the highest dropoff <= distance
   let chosen = weapon.damage[0];
   for (const d of weapon.damage) {
     if (d.dropoff <= distance) chosen = d;
@@ -78,34 +87,13 @@ function ttkAtDistance(weapon: Weapon, distance: number): number | null {
   return chosen.ttk;
 }
 
-function chartSeriesForWeapon(weapon: Weapon, maxDistance: number) {
-  // Build a stepped TTK curve from the dropoff points
-  const points: { distance: number; ttk: number }[] = [];
-  if (weapon.damage.length === 0) return points;
-  for (let i = 0; i < weapon.damage.length; i++) {
-    const cur = weapon.damage[i];
-    const next = weapon.damage[i + 1];
-    const startD = cur.dropoff;
-    const endD = next ? next.dropoff : Math.max(maxDistance, startD + 5);
-    if (startD > maxDistance) break;
-    points.push({ distance: startD, ttk: Math.round(cur.ttk) });
-    points.push({ distance: Math.min(endD, maxDistance), ttk: Math.round(cur.ttk) });
-  }
-  return points;
-}
-
-function classCode(category: string): string {
-  const map: Record<string, string> = {
-    'Assault Rifle': 'AR',
-    'SMG': 'SMG',
-    'Carbine': 'CBN',
-    'DMR': 'DMR',
-    'LMG': 'LMG',
-    'Sniper Rifle': 'SNR',
-    'Pistol': 'PSL',
-    'Shotgun': 'SGN',
-  };
-  return map[category] ?? category.slice(0, 3).toUpperCase();
+function imageUrlCandidates(name: string): string[] {
+  const safe = name.replace(/\s+/g, '-');
+  return [
+    `https://assets.codmunity.gg/optimized/300w-${safe}.webp`,
+    `https://assets.codmunity.gg/optimized/300w-${safe}_bf6_icon.webp`,
+    `https://assets.codmunity.gg/optimized/300w-${name.toLowerCase().replace(/\s+/g, '_')}_bf6_icon.webp`,
+  ];
 }
 
 function formatModKey(key: string): string {
@@ -114,20 +102,44 @@ function formatModKey(key: string): string {
     .replace(/_/g, ' ')
     .replace(/\bads\b/i, 'ADS')
     .replace(/\bbv\b/i, 'BV')
-    .replace(/\brpm\b/i, 'RPM')
-    .replace(/\bstf\b/i, 'STF')
-    .toUpperCase();
+    .replace(/\brpm\b/i, 'RPM');
+}
+
+function WeaponImage({ name, className }: { name: string; className?: string }) {
+  const [idx, setIdx] = useState(0);
+  const candidates = useMemo(() => imageUrlCandidates(name), [name]);
+  if (idx >= candidates.length) {
+    return (
+      <div className={`flex items-center justify-center text-text-muted/40 ${className ?? ''}`}>
+        <svg width="40" height="20" viewBox="0 0 40 20" fill="none">
+          <rect x="2" y="6" width="22" height="6" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="24" y="4" width="14" height="10" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="0" y1="12" x2="2" y2="12" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+      </div>
+    );
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={candidates[idx]}
+      alt={name}
+      className={className}
+      onError={() => setIdx((i) => i + 1)}
+      loading="lazy"
+    />
+  );
 }
 
 export default function Arsenal() {
   const [data, setData] = useState<{ weapons: Weapon[]; attachmentsByWeapon: Record<string, AttachmentMod[]> } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState<string>('ALL');
-  const [rangeId, setRangeId] = useState<typeof RANGE_BANDS[number]['id']>('short');
-  const [sortKey, setSortKey] = useState<SortKey>('ttk');
+  const [category, setCategory] = useState<string>('Assault Rifle');
+  const [rangeId, setRangeId] = useState<typeof RANGE_BANDS[number]['id']>('cqc');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [compare, setCompare] = useState<string[]>([]);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,395 +161,331 @@ export default function Arsenal() {
   const filtered = useMemo(() => {
     if (!data) return [];
     return data.weapons
-      .filter((w) => (category === 'ALL' ? true : w.category === category))
+      .filter((w) => w.category === category)
       .filter((w) => (search ? w.name.toLowerCase().includes(search.toLowerCase()) : true))
       .filter((w) => w.damage.length > 0)
       .sort((a, b) => {
-        if (sortKey === 'ttk') {
-          const ta = ttkAtDistance(a, range.maxDistance) ?? Infinity;
-          const tb = ttkAtDistance(b, range.maxDistance) ?? Infinity;
-          return ta - tb;
-        }
-        if (sortKey === 'rpm') return b.rpm - a.rpm;
-        if (sortKey === 'magSize') return b.magSize - a.magSize;
-        if (sortKey === 'mobility') return b.mobility - a.mobility;
-        if (sortKey === 'control') return b.control - a.control;
-        return 0;
+        const ta = ttkAtDistance(a, range.maxDistance) ?? Infinity;
+        const tb = ttkAtDistance(b, range.maxDistance) ?? Infinity;
+        return ta - tb;
       });
-  }, [data, category, search, sortKey, range]);
+  }, [data, category, search, range]);
 
-  const detailWeapon: Weapon | null = useMemo(() => {
-    if (!data) return null;
-    if (hoverId) return data.weapons.find((w) => w.id === hoverId) ?? null;
-    if (selected.length > 0) return data.weapons.find((w) => w.id === selected[0]) ?? null;
-    return filtered[0] ?? null;
-  }, [data, hoverId, selected, filtered]);
-
-  const selectedWeapons = useMemo(() => {
+  const compareWeapons = useMemo(() => {
     if (!data) return [];
-    return selected
+    return compare
       .map((id) => data.weapons.find((w) => w.id === id))
       .filter((w): w is Weapon => Boolean(w));
-  }, [data, selected]);
+  }, [data, compare]);
 
-  const chartData = useMemo(() => {
-    if (selectedWeapons.length === 0) return { points: [], domain: [0, 120] };
-    const max = 120;
-    // Build a unified set of x-values from all selected weapons' dropoff points
-    const xs = new Set<number>();
-    xs.add(0);
-    xs.add(max);
-    for (const w of selectedWeapons) {
-      for (const d of w.damage) if (d.dropoff <= max) xs.add(d.dropoff);
-    }
-    const sortedX = [...xs].sort((a, b) => a - b);
-    const points = sortedX.map((distance) => {
-      const row: Record<string, number> = { distance };
-      for (const w of selectedWeapons) {
-        const ttk = ttkAtDistance(w, distance);
-        if (ttk !== null) row[w.name] = Math.round(ttk);
-      }
-      return row;
-    });
-    return { points, domain: [0, max] as [number, number] };
-  }, [selectedWeapons]);
-
-  function toggleSelected(id: string) {
-    setSelected((prev) => {
+  function toggleCompare(id: string) {
+    setCompare((prev) => {
       if (prev.includes(id)) return prev.filter((p) => p !== id);
       if (prev.length >= 5) return [...prev.slice(1), id];
       return [...prev, id];
     });
   }
 
+  const chartData = useMemo(() => {
+    if (compareWeapons.length === 0) return [];
+    const max = 120;
+    const xs = new Set<number>([0, max]);
+    for (const w of compareWeapons) {
+      for (const d of w.damage) if (d.dropoff <= max) xs.add(d.dropoff);
+    }
+    return [...xs]
+      .sort((a, b) => a - b)
+      .map((distance) => {
+        const row: Record<string, number> = { distance };
+        for (const w of compareWeapons) {
+          const ttk = ttkAtDistance(w, distance);
+          if (ttk !== null) row[w.name] = Math.round(ttk);
+        }
+        return row;
+      });
+  }, [compareWeapons]);
+
   if (error) {
     return (
-      <div className="border border-tactical-rust/60 bg-tactical-rust/10 p-6 font-mono text-sm text-tactical-rust">
-        SIGNAL_LOSS // {error}
+      <div className="border border-negative/40 bg-negative/5 rounded-lg p-6 text-sm text-negative">
+        Failed to load weapons: {error}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="recon-grid recon-grain border border-border p-8 text-text-muted">
-        <div className="font-mono text-xs uppercase tracking-[0.3em]">// loading recon feed</div>
-        <div className="mt-4 h-1 w-full skeleton" />
-        <div className="mt-3 h-1 w-3/4 skeleton" />
-        <div className="mt-3 h-1 w-1/2 skeleton" />
+      <div className="space-y-3">
+        <div className="h-12 skeleton rounded-lg" />
+        <div className="h-10 skeleton rounded-lg" />
+        <div className="h-8 skeleton rounded" />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-20 skeleton rounded-lg" />
+        ))}
       </div>
     );
   }
 
   return (
-    <div className="recon-reveal">
-      {/* Header strip */}
-      <div className="flex items-end justify-between mb-6 pb-4 border-b-2 border-tactical-orange/70">
-        <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.4em] text-tactical-orange/70">
-            // CLASSIFIED INTEL — REDSEC ARSENAL
-          </div>
-          <h2 className="font-display text-5xl sm:text-6xl text-text-primary leading-none mt-1">
-            ARSENAL <span className="text-tactical-orange">/</span> RECON BRIEFING
-          </h2>
-        </div>
-        <div className="hidden sm:flex flex-col items-end gap-1">
-          <span className="stamp text-tactical-orange text-[10px]">FOR EYES ONLY</span>
-          <span className="font-mono text-[10px] text-text-muted tracking-widest">
-            DOC.WPN.{String(filtered.length).padStart(3, '0')} // {data.weapons.length} ENTRIES
-          </span>
-        </div>
+    <div className="space-y-5">
+      {/* Search bar */}
+      <div className="relative">
+        <svg
+          className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <line x1="16.5" y1="16.5" x2="21" y2="21" />
+        </svg>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search any weapon..."
+          className="w-full pl-11 pr-4 py-3 bg-bg-card border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:border-tactical-orange/60 focus:outline-none transition-colors"
+        />
       </div>
 
-      {/* Filters strip */}
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 mb-6">
-        <div className="space-y-3">
-          {/* Category buttons */}
-          <div className="flex flex-wrap gap-1">
-            {CATEGORIES.map((c) => {
-              const active = c === category;
-              return (
-                <button
-                  key={c}
-                  onClick={() => setCategory(c)}
-                  className={
-                    'px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] font-mono border transition-all ' +
-                    (active
-                      ? 'bg-tactical-orange text-bg-primary border-tactical-orange'
-                      : 'border-border text-text-secondary hover:border-tactical-orange/60 hover:text-tactical-orange')
-                  }
-                >
-                  {c === 'ALL' ? '[ ALL ]' : classCode(c)} <span className="opacity-50">{c !== 'ALL' && c.toLowerCase()}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Range band tabs — styled like an ammo spec gauge */}
-          <div className="flex border border-border bg-bg-card/40">
-            {RANGE_BANDS.map((b, i) => {
-              const active = b.id === rangeId;
-              return (
-                <button
-                  key={b.id}
-                  onClick={() => setRangeId(b.id)}
-                  className={
-                    'flex-1 px-3 py-2 text-left transition-colors border-r border-border last:border-r-0 ' +
-                    (active ? 'bg-tactical-orange/10' : 'hover:bg-bg-card-hover')
-                  }
-                >
-                  <div className={'font-mono text-[9px] tracking-widest ' + (active ? 'text-tactical-orange' : 'text-text-muted')}>
-                    BAND_{String(i + 1).padStart(2, '0')}
-                  </div>
-                  <div className={'font-display text-lg leading-none mt-0.5 ' + (active ? 'text-text-primary' : 'text-text-secondary')}>
-                    {b.label}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 md:items-end">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="QUERY WEAPON ID..."
-            className="w-full md:w-64 px-3 py-2 bg-bg-card border border-border focus:border-tactical-orange outline-none font-mono text-xs uppercase tracking-widest text-text-primary placeholder:text-text-muted/60"
-          />
-          <select
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
-            className="w-full md:w-64 px-3 py-2 bg-bg-card border border-border focus:border-tactical-orange outline-none font-mono text-xs uppercase tracking-widest text-text-primary"
-          >
-            <option value="ttk">SORT // TTK ASCENDING</option>
-            <option value="rpm">SORT // RPM DESCENDING</option>
-            <option value="magSize">SORT // MAG DESCENDING</option>
-            <option value="mobility">SORT // MOBILITY</option>
-            <option value="control">SORT // CONTROL</option>
-          </select>
-        </div>
+      {/* Category pills */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {CATEGORIES.map((c) => {
+          const active = c === category;
+          return (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={
+                'py-2.5 px-3 rounded-lg border text-sm font-medium transition-colors ' +
+                (active
+                  ? 'bg-bg-card-hover border-tactical-orange/70 text-text-primary'
+                  : 'bg-bg-card border-border text-text-secondary hover:border-border-accent hover:text-text-primary')
+              }
+            >
+              {c}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-6">
-        {/* Weapon list */}
-        <div className="border border-border bg-bg-card/40 recon-grain">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-card/60">
-            <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-tactical-orange">
-              // WEAPONS_TABLE [{range.short}]
-            </span>
-            <span className="font-mono text-[10px] text-text-muted">{filtered.length} / {data.weapons.length}</span>
-          </div>
+      {/* Distance tabs */}
+      <div className="flex border-b border-border">
+        {RANGE_BANDS.map((b) => {
+          const active = b.id === rangeId;
+          return (
+            <button
+              key={b.id}
+              onClick={() => setRangeId(b.id)}
+              className={
+                'flex-1 py-3 text-center text-sm relative transition-colors ' +
+                (active ? 'text-tactical-orange' : 'text-text-secondary hover:text-text-primary')
+              }
+            >
+              {b.label}
+              {active && <span className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-tactical-orange" />}
+            </button>
+          );
+        })}
+      </div>
 
-          <div className="max-h-[640px] overflow-y-auto">
-            {filtered.length === 0 && (
-              <div className="p-6 text-center text-text-muted font-mono text-xs">// NO MATCHES</div>
-            )}
-            {filtered.map((w, idx) => {
-              const ttk = ttkAtDistance(w, range.maxDistance);
-              const isSelected = selected.includes(w.id);
-              const isHover = hoverId === w.id;
-              const palIdx = selected.indexOf(w.id);
-              const swatch = palIdx >= 0 ? COMPARE_PALETTE[palIdx] : null;
-              const seq = String(idx + 1).padStart(3, '0');
-              return (
+      {/* Compare bar */}
+      {compare.length > 0 && (
+        <div className="border border-tactical-orange/40 bg-tactical-orange/5 rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between gap-3 p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-text-secondary">Comparing</span>
+              {compareWeapons.map((w, i) => (
                 <button
                   key={w.id}
-                  onClick={() => toggleSelected(w.id)}
-                  onMouseEnter={() => setHoverId(w.id)}
-                  onMouseLeave={() => setHoverId(null)}
-                  className={
-                    'w-full text-left px-3 py-2.5 border-b border-border/60 transition-colors block group ' +
-                    (isSelected
-                      ? 'bg-tactical-orange/10 hover:bg-tactical-orange/15'
-                      : isHover
-                      ? 'bg-bg-card-hover'
-                      : 'hover:bg-bg-card-hover/60')
-                  }
+                  onClick={() => toggleCompare(w.id)}
+                  className="flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-bg-card border border-border rounded-md text-xs hover:border-negative/60 hover:text-negative transition-colors group"
                 >
-                  <div className="flex items-center gap-3">
-                    {/* Sequence + selection swatch */}
-                    <div className="flex items-center gap-2 min-w-[58px]">
-                      <span className="font-mono text-[10px] text-text-muted">{seq}</span>
-                      <span
-                        className="w-2 h-2 rounded-full border"
-                        style={{
-                          backgroundColor: swatch ?? 'transparent',
-                          borderColor: swatch ?? 'var(--color-border-accent)',
-                        }}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-display text-lg text-text-primary truncate">{w.name}</span>
-                        <span className="font-mono text-[9px] text-text-muted tracking-widest uppercase">
-                          [{classCode(w.category)}]
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 font-mono text-[10px] text-text-muted uppercase">
-                        <span>RPM {w.rpm}</span>
-                        <span>·</span>
-                        <span>MAG {w.magSize}</span>
-                        <span>·</span>
-                        <span>BV {w.bv}</span>
-                      </div>
-                    </div>
-                    <div className="text-right min-w-[64px]">
-                      <div className="font-display text-2xl leading-none text-tactical-orange">
-                        {ttk !== null ? ttk.toFixed(0) : '—'}
-                      </div>
-                      <div className="font-mono text-[9px] text-text-muted tracking-widest mt-0.5">MS / TTK</div>
-                    </div>
-                  </div>
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COMPARE_PALETTE[i] }} />
+                  <span className="text-text-primary group-hover:text-negative">{w.name}</span>
+                  <span className="text-text-muted group-hover:text-negative">×</span>
                 </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Detail + chart panel */}
-        <div className="space-y-6">
-          {/* TTK chart */}
-          <div className="border border-border bg-bg-card/40 recon-grain">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-card/60">
-              <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-tactical-orange">
-                // TTK CURVE — DISTANCE VS LETHALITY (MS)
-              </span>
-              <span className="font-mono text-[10px] text-text-muted">
-                COMPARE [{selectedWeapons.length}/5]
-              </span>
+              ))}
             </div>
-            <div className="p-3">
-              {selectedWeapons.length === 0 ? (
-                <div className="h-[280px] flex flex-col items-center justify-center font-mono text-xs text-text-muted gap-2">
-                  <div className="text-4xl">⌖</div>
-                  <div className="tracking-widest uppercase">// SELECT WEAPON ENTRIES TO PLOT</div>
-                  <div className="text-[10px] text-text-muted/70">CLICK ROW IN WEAPONS_TABLE</div>
-                </div>
-              ) : (
-                <div className="h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData.points} margin={{ top: 10, right: 16, left: 4, bottom: 8 }}>
-                      <CartesianGrid stroke="rgba(255,107,26,0.08)" strokeDasharray="2 4" />
-                      <XAxis
-                        dataKey="distance"
-                        type="number"
-                        domain={chartData.domain}
-                        ticks={[0, 10, 20, 35, 50, 75, 100, 120]}
-                        stroke="#475569"
-                        tick={{ fill: '#94a3b8', fontFamily: 'var(--font-mono)', fontSize: 10 }}
-                        label={{
-                          value: 'METERS',
-                          position: 'insideBottom',
-                          offset: -2,
-                          fill: '#64748b',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 10,
-                        }}
-                      />
-                      <YAxis
-                        stroke="#475569"
-                        tick={{ fill: '#94a3b8', fontFamily: 'var(--font-mono)', fontSize: 10 }}
-                        label={{
-                          value: 'MS',
-                          angle: -90,
-                          position: 'insideLeft',
-                          fill: '#64748b',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 10,
-                        }}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#0a0f1a',
-                          border: '1px solid #ff6b1a',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 11,
-                          textTransform: 'uppercase',
-                        }}
-                        labelStyle={{ color: '#ff6b1a', letterSpacing: '0.1em' }}
-                        formatter={(value, name) => [`${value} ms`, name as string]}
-                        labelFormatter={(v) => `RANGE ${v} M`}
-                      />
-                      {selectedWeapons.map((w, i) => (
-                        <Line
-                          key={w.id}
-                          type="stepAfter"
-                          dataKey={w.name}
-                          stroke={COMPARE_PALETTE[i]}
-                          strokeWidth={2}
-                          dot={{ r: 3, fill: COMPARE_PALETTE[i] }}
-                          activeDot={{ r: 5 }}
-                          isAnimationActive={false}
-                        />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* Legend / chips */}
-              {selectedWeapons.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border/60">
-                  {selectedWeapons.map((w, i) => (
-                    <button
-                      key={w.id}
-                      onClick={() => toggleSelected(w.id)}
-                      className="flex items-center gap-2 px-2 py-1 border border-border hover:border-tactical-rust hover:text-tactical-rust transition-colors group"
-                    >
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COMPARE_PALETTE[i] }} />
-                      <span className="font-display text-sm">{w.name}</span>
-                      <span className="font-mono text-[10px] text-text-muted group-hover:text-tactical-rust">×</span>
-                    </button>
-                  ))}
-                  {selected.length > 0 && (
-                    <button
-                      onClick={() => setSelected([])}
-                      className="ml-auto px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-text-muted hover:text-tactical-rust"
-                    >
-                      CLEAR_ALL
-                    </button>
-                  )}
-                </div>
-              )}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setShowCompare((v) => !v)}
+                className="px-3 py-1.5 text-xs text-text-primary border border-border rounded-md hover:border-tactical-orange/60 transition-colors"
+              >
+                {showCompare ? 'Hide chart' : 'View chart'}
+              </button>
+              <button
+                onClick={() => {
+                  setCompare([]);
+                  setShowCompare(false);
+                }}
+                className="px-3 py-1.5 text-xs text-text-muted hover:text-negative transition-colors"
+              >
+                Clear
+              </button>
             </div>
           </div>
-
-          {/* Detail panel */}
-          {detailWeapon && (
-            <WeaponDetail
-              weapon={detailWeapon}
-              attachments={data.attachmentsByWeapon[detailWeapon.name] ?? []}
-              activeRange={range}
-            />
+          {showCompare && compareWeapons.length > 0 && (
+            <div className="border-t border-tactical-orange/30 bg-bg-card/40 p-4">
+              <div className="text-xs text-text-secondary mb-2">TTK over distance (ms)</div>
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.1)" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="distance"
+                      type="number"
+                      domain={[0, 120]}
+                      ticks={[0, 10, 20, 35, 50, 75, 100, 120]}
+                      stroke="#475569"
+                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      label={{ value: 'distance (m)', position: 'insideBottom', offset: -2, fill: '#64748b', fontSize: 11 }}
+                    />
+                    <YAxis stroke="#475569" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#0a0f1a',
+                        border: '1px solid #334155',
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      labelStyle={{ color: '#f1f5f9' }}
+                      formatter={(value, name) => [`${value} ms`, name as string]}
+                      labelFormatter={(v) => `${v} m`}
+                    />
+                    {compareWeapons.map((w, i) => (
+                      <Line
+                        key={w.id}
+                        type="stepAfter"
+                        dataKey={w.name}
+                        stroke={COMPARE_PALETTE[i]}
+                        strokeWidth={2}
+                        dot={{ r: 3, fill: COMPARE_PALETTE[i] }}
+                        activeDot={{ r: 5 }}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           )}
         </div>
+      )}
+
+      {/* Weapon rows */}
+      <div className="space-y-2">
+        {filtered.length === 0 && (
+          <div className="border border-border rounded-lg p-10 text-center text-text-muted text-sm">
+            No weapons match.
+          </div>
+        )}
+
+        {filtered.map((w) => {
+          const ttk = ttkAtDistance(w, range.maxDistance);
+          const expanded = expandedId === w.id;
+          const inCompare = compare.includes(w.id);
+          const stripe = CATEGORY_STRIPE[w.category] ?? '#f97316';
+          const attachments = data.attachmentsByWeapon[w.name] ?? [];
+          return (
+            <div
+              key={w.id}
+              className={
+                'border rounded-lg overflow-hidden transition-colors ' +
+                (expanded ? 'border-tactical-orange/40 bg-bg-card' : 'border-border bg-bg-card hover:border-border-accent')
+              }
+            >
+              <button
+                onClick={() => setExpandedId(expanded ? null : w.id)}
+                className="w-full flex items-stretch text-left"
+              >
+                {/* Left edge stripe */}
+                <div className="w-1 flex-shrink-0" style={{ backgroundColor: stripe }} />
+
+                <div className="flex-1 flex items-center gap-4 px-4 py-4">
+                  {/* Name + category + chips */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2.5 mb-1.5">
+                      <span className="text-base font-semibold text-text-primary tracking-tight">{w.name}</span>
+                      <span className="text-xs text-text-muted">{w.category}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="px-2 py-0.5 bg-tactical-orange/15 text-tactical-orange rounded-md font-medium">
+                        {attachments.length} Attachments
+                      </span>
+                      <span className="px-2 py-0.5 bg-bg-primary text-text-secondary rounded-md">
+                        {w.rpm} RPM
+                      </span>
+                      <span className="px-2 py-0.5 bg-bg-primary text-text-secondary rounded-md">
+                        {w.magSize} mag
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* TTK badge */}
+                  <div className="px-3 py-2 bg-bg-primary border border-border rounded-md text-right flex-shrink-0">
+                    <div className="text-[10px] text-text-muted uppercase tracking-wider">TTK</div>
+                    <div className="text-base font-semibold text-tactical-orange leading-none mt-0.5">
+                      {ttk !== null ? `${ttk.toFixed(0)}ms` : '—'}
+                    </div>
+                  </div>
+
+                  {/* Weapon image */}
+                  <div className="w-[88px] h-12 flex items-center justify-center flex-shrink-0">
+                    <WeaponImage name={w.name} className="max-w-full max-h-full object-contain" />
+                  </div>
+
+                  {/* Chevron */}
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className={'text-text-muted transition-transform flex-shrink-0 ' + (expanded ? 'rotate-180' : '')}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
+              </button>
+
+              {expanded && (
+                <ExpandedDetail
+                  weapon={w}
+                  attachments={attachments}
+                  activeRange={range}
+                  inCompare={inCompare}
+                  onToggleCompare={() => toggleCompare(w.id)}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="text-[11px] text-text-muted text-center pt-2">
+        Weapon data via <a href="https://battlefinity.gg" className="hover:text-tactical-orange" target="_blank" rel="noreferrer">battlefinity.gg</a> · {data.weapons.length} weapons cataloged
       </div>
     </div>
   );
 }
 
-function WeaponDetail({
+function ExpandedDetail({
   weapon,
   attachments,
   activeRange,
+  inCompare,
+  onToggleCompare,
 }: {
   weapon: Weapon;
   attachments: AttachmentMod[];
   activeRange: typeof RANGE_BANDS[number];
+  inCompare: boolean;
+  onToggleCompare: () => void;
 }) {
-  const ttkActive = ttkAtDistance(weapon, activeRange.maxDistance);
-  const stk = useMemo(() => {
-    if (!weapon.damage.length) return null;
-    let chosen = weapon.damage[0];
-    for (const d of weapon.damage) {
-      if (d.dropoff <= activeRange.maxDistance) chosen = d;
-      else break;
-    }
-    return chosen.shots_to_kill;
-  }, [weapon, activeRange]);
-
   const attachmentsBySlot = useMemo(() => {
     const map: Record<string, AttachmentMod[]> = {};
     for (const a of attachments) {
@@ -546,156 +494,143 @@ function WeaponDetail({
     }
     return map;
   }, [attachments]);
-
   const slots = Object.keys(attachmentsBySlot);
 
   return (
-    <div className="border border-border bg-bg-card/40 recon-grain">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-card/60">
-        <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-tactical-orange">
-          // DOSSIER — {weapon.name}
-        </span>
-        <span className="font-mono text-[10px] text-text-muted">[{classCode(weapon.category)}]</span>
-      </div>
+    <div className="border-t border-border/60 bg-bg-primary/40">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-px bg-border/40">
+        {/* Stats + damage */}
+        <div className="bg-bg-card p-4 space-y-4">
+          <div className="grid grid-cols-4 gap-2">
+            <Stat label="RPM" value={weapon.rpm} />
+            <Stat label="MAG" value={weapon.magSize} />
+            <Stat label="BV" value={weapon.bv} />
+            <Stat label="ADS" value={weapon.ads} suffix="ms" />
+            <StatBar label="Mobility" value={weapon.mobility} max={100} />
+            <StatBar label="Control" value={weapon.control} max={100} />
+            <StatBar label="Hipfire" value={weapon.hipfire} max={100} />
+            <StatBar label="Precision" value={weapon.precision} max={100} />
+          </div>
 
-      <div className="p-4">
-        {/* Hero row */}
-        <div className="flex items-end justify-between gap-4 pb-4 border-b border-border/60">
           <div>
-            <div className="font-mono text-[10px] tracking-widest text-text-muted uppercase">
-              {weapon.category} · {weapon.game}
+            <div className="text-xs text-text-secondary mb-2">Damage by range</div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+              {weapon.damage.slice(0, 5).map((d, i) => {
+                const next = weapon.damage[i + 1];
+                const inBand =
+                  activeRange.maxDistance >= d.dropoff && (!next || activeRange.maxDistance < next.dropoff);
+                return (
+                  <div
+                    key={i}
+                    className={
+                      'p-2 rounded-md border ' +
+                      (inBand
+                        ? 'border-tactical-orange/50 bg-tactical-orange/5'
+                        : 'border-border bg-bg-primary/60')
+                    }
+                  >
+                    <div className="text-[10px] text-text-muted">≥ {d.dropoff}m</div>
+                    <div className="text-sm font-semibold text-text-primary mt-0.5">
+                      {d.chest} <span className="text-[10px] text-text-muted font-normal">dmg</span>
+                    </div>
+                    <div className="text-[10px] text-text-muted mt-0.5">
+                      {d.shots_to_kill} shots
+                    </div>
+                    <div className="text-[10px] text-tactical-orange mt-0.5">
+                      {Math.round(d.ttk)}ms
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <h3 className="font-display text-4xl text-text-primary leading-none mt-1">{weapon.name}</h3>
           </div>
-          <div className="text-right">
-            <div className="font-mono text-[10px] tracking-widest text-text-muted uppercase">
-              TTK @ {activeRange.label}
-            </div>
-            <div className="font-display text-5xl text-tactical-orange leading-none">
-              {ttkActive !== null ? ttkActive.toFixed(0) : '—'}
-              <span className="text-base text-text-muted ml-1 font-mono">MS</span>
-            </div>
-            <div className="font-mono text-[10px] text-text-muted mt-1 tracking-widest">
-              {stk !== null ? `${stk} SHOTS_TO_KILL` : ''}
-            </div>
-          </div>
-        </div>
 
-        {/* Stat grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-border/40 mt-4">
-          <Stat label="RPM" value={weapon.rpm} />
-          <Stat label="MAG" value={weapon.magSize} />
-          <Stat label="BV" value={weapon.bv} />
-          <Stat label="ADS" value={weapon.ads} suffix="ms" />
-          <Stat label="MOBILITY" value={weapon.mobility} max={100} />
-          <Stat label="CONTROL" value={weapon.control} max={100} />
-          <Stat label="HIPFIRE" value={weapon.hipfire} max={100} />
-          <Stat label="PRECISION" value={weapon.precision} max={100} />
-        </div>
-
-        {/* Damage profile bands */}
-        <div className="mt-5">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-text-muted mb-2">
-            // DAMAGE PROFILE
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-px bg-border/40">
-            {weapon.damage.slice(0, 5).map((d, i) => {
-              const active = activeRange.maxDistance >= d.dropoff && (i === weapon.damage.length - 1 || activeRange.maxDistance < (weapon.damage[i + 1]?.dropoff ?? Infinity));
-              return (
-                <div
-                  key={i}
-                  className={
-                    'p-2 ' + (active ? 'bg-tactical-orange/10 ring-1 ring-tactical-orange/40' : 'bg-bg-card/60')
-                  }
-                >
-                  <div className="font-mono text-[9px] tracking-widest text-text-muted">
-                    ≥ {d.dropoff} M
-                  </div>
-                  <div className="font-display text-xl leading-none text-text-primary mt-0.5">
-                    {d.chest}<span className="text-xs text-text-muted ml-0.5">DMG</span>
-                  </div>
-                  <div className="font-mono text-[10px] text-text-muted mt-1">
-                    HEAD {d.head} · STK {d.shots_to_kill}
-                  </div>
-                  <div className="font-mono text-[10px] text-tactical-orange/80 mt-0.5">
-                    TTK {Math.round(d.ttk)} MS
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <button
+            onClick={onToggleCompare}
+            className={
+              'w-full py-2 rounded-md text-sm font-medium transition-colors border ' +
+              (inCompare
+                ? 'border-tactical-orange/60 bg-tactical-orange/10 text-tactical-orange'
+                : 'border-border bg-bg-primary hover:border-tactical-orange/60 text-text-primary')
+            }
+          >
+            {inCompare ? '✓ Added to compare' : 'Add to compare'}
+          </button>
         </div>
 
         {/* Attachments */}
-        {slots.length > 0 && (
-          <div className="mt-5">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-text-muted mb-2">
-              // FIELD ATTACHMENTS — {attachments.length} CONFIGURED
-            </div>
-            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-              {slots.map((slot) => (
-                <div key={slot} className="border border-border/60 bg-bg-card/40">
-                  <div className="px-2 py-1 border-b border-border/60 flex items-center gap-2">
-                    <span className="hatch w-3 h-3 inline-block" />
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-tactical-bone">
-                      [{slot.toUpperCase()}] · {attachmentsBySlot[slot].length}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-border/40">
-                    {attachmentsBySlot[slot].slice(0, 4).map((a) => (
-                      <div key={a.id} className="px-2 py-1.5 flex items-center justify-between gap-2">
-                        <span className="text-xs text-text-primary truncate">{a.name}</span>
-                        <div className="flex flex-wrap gap-1 justify-end">
-                          {Object.entries(a.mods).slice(0, 4).map(([k, v]) => {
-                            const positive = v > 0;
-                            return (
-                              <span
-                                key={k}
-                                className={
-                                  'px-1.5 py-0.5 font-mono text-[9px] tracking-wider ' +
-                                  (positive ? 'text-positive bg-positive/10' : 'text-tactical-rust bg-tactical-rust/10')
-                                }
-                              >
-                                {formatModKey(k)} {positive ? '+' : ''}
-                                {typeof v === 'number' && Math.abs(v) < 10 && v % 1 !== 0 ? v.toFixed(2) : v}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                    {attachmentsBySlot[slot].length > 4 && (
-                      <div className="px-2 py-1 font-mono text-[10px] text-text-muted">
-                        +{attachmentsBySlot[slot].length - 4} more
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+        <div className="bg-bg-card p-4">
+          <div className="text-xs text-text-secondary mb-2">
+            Attachments {attachments.length > 0 && <span className="text-text-muted">· {attachments.length}</span>}
           </div>
-        )}
+          {slots.length === 0 && (
+            <div className="text-xs text-text-muted py-6 text-center">No attachments cataloged</div>
+          )}
+          <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+            {slots.map((slot) => (
+              <div key={slot}>
+                <div className="text-[10px] text-text-muted uppercase tracking-wider mb-1.5">{slot}</div>
+                <div className="space-y-1">
+                  {attachmentsBySlot[slot].map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-bg-primary/60 rounded-md"
+                    >
+                      <span className="text-xs text-text-primary truncate">{a.name}</span>
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        {Object.entries(a.mods).slice(0, 3).map(([k, v]) => {
+                          const positive = v > 0;
+                          return (
+                            <span
+                              key={k}
+                              className={
+                                'px-1.5 py-0.5 rounded text-[10px] ' +
+                                (positive ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative')
+                              }
+                            >
+                              {formatModKey(k)} {positive ? '+' : ''}
+                              {Math.abs(v) < 10 && v % 1 !== 0 ? v.toFixed(2) : v}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, suffix, max }: { label: string; value: number; suffix?: string; max?: number }) {
+function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
   return (
-    <div className="bg-bg-card/60 px-3 py-2.5 relative">
-      <div className="font-mono text-[9px] tracking-widest text-text-muted uppercase">{label}</div>
-      <div className="font-display text-2xl leading-none text-text-primary mt-0.5">
+    <div className="bg-bg-primary/60 rounded-md px-2.5 py-2">
+      <div className="text-[10px] text-text-muted uppercase tracking-wider">{label}</div>
+      <div className="text-base font-semibold text-text-primary mt-0.5">
         {value}
-        {suffix && <span className="text-sm text-text-muted ml-1 font-mono">{suffix}</span>}
+        {suffix && <span className="text-[10px] text-text-muted ml-1 font-normal">{suffix}</span>}
       </div>
-      {max !== undefined && (
-        <div className="mt-2 h-[2px] bg-border/60 relative overflow-hidden">
-          <div
-            className="absolute inset-y-0 left-0 bg-tactical-orange"
-            style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
-          />
-        </div>
-      )}
+    </div>
+  );
+}
+
+function StatBar({ label, value, max }: { label: string; value: number; max: number }) {
+  return (
+    <div className="bg-bg-primary/60 rounded-md px-2.5 py-2">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] text-text-muted uppercase tracking-wider">{label}</span>
+        <span className="text-[11px] text-text-primary font-medium">{value}</span>
+      </div>
+      <div className="mt-1.5 h-[3px] bg-border rounded-full overflow-hidden">
+        <div
+          className="h-full bg-tactical-orange rounded-full"
+          style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
+        />
+      </div>
     </div>
   );
 }
