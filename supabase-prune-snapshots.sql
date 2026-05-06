@@ -2,8 +2,9 @@
 -- most recent snapshot regardless of age (so the next cron diff still has a
 -- "previous state" to compare against, even for inactive players).
 --
--- Run this once in the Supabase SQL Editor to recover space immediately.
--- The /api/prune route handles the ongoing daily maintenance.
+-- Run this once in the Supabase SQL Editor.
+-- Then run supabase-vacuum-snapshots.sql separately to reclaim disk space
+-- (VACUUM FULL is non-transactional and can't share a query with DDL/DML).
 
 -- 1. Relax the foreign key from game_events → snapshots so pruning snapshots
 --    no longer cascades into deleting match history. game_events already
@@ -37,8 +38,3 @@ WITH latest_per_player AS (
 DELETE FROM snapshots
 WHERE captured_at < NOW() - INTERVAL '7 days'
   AND id NOT IN (SELECT id FROM latest_per_player);
-
--- 3. Postgres MVCC marks rows as dead but doesn't reclaim disk until vacuum.
--- Autovacuum will catch up eventually; run VACUUM FULL once to reclaim space
--- immediately and shrink the on-disk table size.
-VACUUM FULL ANALYZE snapshots;
