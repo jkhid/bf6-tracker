@@ -66,19 +66,7 @@ const RANGE_BANDS = [
 
 const CATEGORIES = ['Assault Rifle', 'SMG', 'Carbine', 'DMR', 'LMG', 'Sniper Rifle', 'Pistol', 'Shotgun'];
 
-// One stripe color per category — left edge accent
-const CATEGORY_STRIPE: Record<string, string> = {
-  'Assault Rifle': '#f97316',
-  'SMG': '#eab308',
-  'Carbine': '#84cc16',
-  'DMR': '#22d3ee',
-  'LMG': '#a855f7',
-  'Sniper Rifle': '#ef4444',
-  'Pistol': '#94a3b8',
-  'Shotgun': '#f59e0b',
-};
-
-const COMPARE_PALETTE = ['#f97316', '#eab308', '#22d3ee', '#a855f7', '#22c55e'];
+const COMPARE_PALETTE = ['#ff6b1a', '#f59e0b', '#22d3ee', '#a855f7', '#22c55e'];
 const REDSEC_HEALTH = 200;
 const REDSEC_TICK_RATE = 30;
 const WEAPON_IMAGE_ALIASES: Record<string, string[]> = {
@@ -90,6 +78,7 @@ type EquippedByWeapon = Record<string, EquippedBySlot>;
 type CalculatedWeapon = Weapon;
 type ComparedWeapon = CalculatedWeapon & { equippedCount: number };
 type CompareView = 'chart' | 'table';
+type SortMetric = 'ttk' | 'rpm' | 'mag' | 'damage';
 type CompareMetric = {
   id: string;
   label: string;
@@ -326,13 +315,13 @@ function formatModValue(value: number): string {
   return `${value > 0 ? '+' : ''}${formatted}`;
 }
 
-function WeaponImage({ name, className }: { name: string; className?: string }) {
+function WeaponSilhouette({ name, className }: { name: string; className?: string }) {
   const [idx, setIdx] = useState(0);
   const candidates = useMemo(() => imageUrlCandidates(name), [name]);
   if (idx >= candidates.length) {
     return (
       <div className={`relative flex items-center justify-center text-text-muted/50 ${className ?? ''}`}>
-        <svg width="72" height="32" viewBox="0 0 72 32" fill="none" aria-hidden="true">
+        <svg viewBox="0 0 72 32" fill="none" className="w-full h-full p-1" aria-hidden="true">
           <path d="M5 19H35V13H50V17H66V22H45V25H31V22H5V19Z" stroke="currentColor" strokeWidth="2" />
           <path d="M17 19V15H31" stroke="currentColor" strokeWidth="2" />
           <path d="M50 17V10H61V17" stroke="currentColor" strokeWidth="2" />
@@ -342,6 +331,7 @@ function WeaponImage({ name, className }: { name: string; className?: string }) 
     );
   }
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={candidates[idx]}
       alt={name}
@@ -352,16 +342,98 @@ function WeaponImage({ name, className }: { name: string; className?: string }) 
   );
 }
 
+function Sparkline({
+  weapon,
+  width = 80,
+  height = 22,
+  color = 'var(--color-tactical-orange)',
+}: {
+  weapon: CalculatedWeapon;
+  width?: number;
+  height?: number;
+  color?: string;
+}) {
+  const points = useMemo(() => {
+    const pts: { d: number; ttk: number }[] = [];
+    for (let d = 0; d <= 120; d += 4) {
+      const ttk = ttkAtDistance(weapon, d);
+      if (ttk !== null) pts.push({ d, ttk });
+    }
+    return pts;
+  }, [weapon]);
+  if (points.length === 0) return null;
+  const minTtk = Math.min(...points.map((p) => p.ttk));
+  const maxTtk = Math.max(...points.map((p) => p.ttk));
+  const range = maxTtk - minTtk || 1;
+  const path = points
+    .map((p, i) => {
+      const x = (p.d / 120) * width;
+      const y = height - ((p.ttk - minTtk) / range) * (height - 4) - 2;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const area = `${path} L${width},${height} L0,${height} Z`;
+  return (
+    <svg width={width} height={height} className="overflow-visible block" aria-hidden="true">
+      <path d={area} fill={color} fillOpacity="0.12" />
+      <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BigSparkline({ weapon }: { weapon: CalculatedWeapon }) {
+  const w = 600;
+  const h = 80;
+  const points = useMemo(() => {
+    const pts: { d: number; ttk: number }[] = [];
+    for (let d = 0; d <= 120; d += 1) {
+      const ttk = ttkAtDistance(weapon, d);
+      if (ttk !== null) pts.push({ d, ttk });
+    }
+    return pts;
+  }, [weapon]);
+  if (points.length === 0) return null;
+  const minTtk = Math.min(...points.map((p) => p.ttk));
+  const maxTtk = Math.max(...points.map((p) => p.ttk));
+  const range = maxTtk - minTtk || 1;
+  const path = points
+    .map((p, i) => {
+      const x = (p.d / 120) * w;
+      const y = h - ((p.ttk - minTtk) / range) * (h - 8) - 4;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const area = `${path} L${w},${h} L0,${h} Z`;
+  return (
+    <div className="relative w-full h-[80px] bg-bg-primary/60 rounded border border-border overflow-hidden">
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full">
+        {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
+          <line key={i} x1={p * w} y1={0} x2={p * w} y2={h} stroke="rgba(148,163,184,0.08)" />
+        ))}
+        <path d={area} fill="var(--color-tactical-orange)" fillOpacity="0.14" />
+        <path d={path} fill="none" stroke="var(--color-tactical-orange)" strokeWidth="1.5" />
+      </svg>
+      <div className="absolute inset-0 flex justify-between items-end px-2 pb-0.5 pointer-events-none">
+        {[0, 30, 60, 90, 120].map((d) => (
+          <span key={d} className="text-[9px] text-text-muted font-mono tabular-nums">{d}m</span>
+        ))}
+      </div>
+      <div className="absolute top-1 left-2 text-[9px] font-mono text-text-muted tabular-nums">{Math.round(maxTtk)}ms</div>
+      <div className="absolute bottom-3 left-2 text-[9px] font-mono tabular-nums text-tactical-orange">{Math.round(minTtk)}ms</div>
+    </div>
+  );
+}
+
 export default function Arsenal() {
   const [data, setData] = useState<{ weapons: Weapon[]; attachmentsByWeapon: Record<string, AttachmentMod[]> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<string>('Assault Rifle');
   const [rangeId, setRangeId] = useState<typeof RANGE_BANDS[number]['id']>('cqc');
   const [search, setSearch] = useState('');
+  const [sortMetric, setSortMetric] = useState<SortMetric>('ttk');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [compare, setCompare] = useState<string[]>([]);
   const [showCompare, setShowCompare] = useState(false);
-  const [compareView, setCompareView] = useState<CompareView>('chart');
   const [equipped, setEquipped] = useState<EquippedByWeapon>({});
 
   useEffect(() => {
@@ -387,16 +459,27 @@ export default function Arsenal() {
       .filter((w) => w.category === category)
       .filter((w) => (search ? w.name.toLowerCase().includes(search.toLowerCase()) : true))
       .filter((w) => w.damage.length > 0)
+      .map((w) => {
+        const attachments = data.attachmentsByWeapon[w.name] ?? [];
+        const selectedAtts = selectedAttachmentsForWeapon(attachments, equipped[w.id]);
+        const calculated = applyAttachments(w, selectedAtts);
+        const ttk = averageTtk(calculated, range);
+        return { weapon: w, calculated, attachments, selectedAtts, ttk };
+      })
       .sort((a, b) => {
-        const attachmentsA = data.attachmentsByWeapon[a.name] ?? [];
-        const attachmentsB = data.attachmentsByWeapon[b.name] ?? [];
-        const calcA = applyAttachments(a, selectedAttachmentsForWeapon(attachmentsA, equipped[a.id]));
-        const calcB = applyAttachments(b, selectedAttachmentsForWeapon(attachmentsB, equipped[b.id]));
-        const ta = averageTtk(calcA, range) ?? Infinity;
-        const tb = averageTtk(calcB, range) ?? Infinity;
-        return ta - tb;
+        switch (sortMetric) {
+          case 'rpm':
+            return b.calculated.rpm - a.calculated.rpm;
+          case 'mag':
+            return b.calculated.magSize - a.calculated.magSize;
+          case 'damage':
+            return (b.calculated.damage[0]?.chest ?? 0) - (a.calculated.damage[0]?.chest ?? 0);
+          case 'ttk':
+          default:
+            return (a.ttk ?? Infinity) - (b.ttk ?? Infinity);
+        }
       });
-  }, [data, category, search, range, equipped]);
+  }, [data, category, search, range, equipped, sortMetric]);
 
   const compareWeapons = useMemo(() => {
     if (!data) return [];
@@ -436,19 +519,6 @@ export default function Arsenal() {
     });
   }
 
-  const chartData = useMemo(() => {
-    if (compareWeapons.length === 0) return [];
-    const max = 120;
-    return Array.from({ length: max + 1 }, (_, distance) => {
-      const row: Record<string, number> = { distance };
-      for (const w of compareWeapons) {
-        const ttk = ttkAtDistance(w, distance);
-        if (ttk !== null) row[w.id] = Math.round(ttk);
-      }
-      return row;
-    });
-  }, [compareWeapons]);
-
   if (error) {
     return (
       <div className="border border-negative/40 bg-negative/5 rounded-lg p-6 text-sm text-negative">
@@ -471,52 +541,86 @@ export default function Arsenal() {
   }
 
   return (
-    <div className="space-y-5">
-      {/* Search bar */}
-      <div className="relative">
-        <svg
-          className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <line x1="16.5" y1="16.5" x2="21" y2="21" />
-        </svg>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search any weapon..."
-          className="w-full pl-11 pr-4 py-3 bg-bg-card border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:border-tactical-orange/60 focus:outline-none transition-colors"
-        />
+    <div className="space-y-5 pb-24">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4 pb-1">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-8 rounded-sm bg-tactical-orange" />
+          <div>
+            <h2 className="font-display text-[22px] tracking-tight leading-none">WEAPON STATS</h2>
+            <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted mt-1">
+              BF6 · {data.weapons.length} weapons cataloged · RedSec ruleset
+            </div>
+          </div>
+        </div>
+        <div className="hidden sm:flex items-center gap-2 text-[10px] font-mono text-text-muted">
+          <span>SORT</span>
+          <span className="text-text-primary uppercase tracking-wider">{sortMetric}</span>
+          <span className="opacity-40">·</span>
+          <span>{filtered.length} match</span>
+        </div>
       </div>
 
-      {/* Category pills */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-        {CATEGORIES.map((c) => {
-          const active = c === category;
-          return (
-            <button
-              key={c}
-              onClick={() => setCategory(c)}
-              className={
-                'py-2.5 px-3 rounded-lg border text-sm font-medium transition-colors ' +
-                (active
-                  ? 'bg-bg-card-hover border-tactical-orange/70 text-text-primary'
-                  : 'bg-bg-card border-border text-text-secondary hover:border-border-accent hover:text-text-primary')
-              }
+      {/* Search + categories */}
+      <div className="flex flex-col lg:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-2 lg:w-[420px] flex-shrink-0">
+          <div className="relative flex-1">
+            <svg
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
             >
-              {c}
-            </button>
-          );
-        })}
+              <circle cx="11" cy="11" r="7" />
+              <line x1="16.5" y1="16.5" x2="21" y2="21" />
+            </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search weapons…"
+              className="w-full pl-10 pr-3 py-2.5 bg-bg-card border border-border rounded-md text-[13px] text-text-primary placeholder:text-text-muted focus:border-tactical-orange/60 focus:outline-none transition-colors"
+            />
+          </div>
+          <select
+            value={sortMetric}
+            onChange={(e) => setSortMetric(e.target.value as SortMetric)}
+            className="px-3 py-2.5 bg-bg-card border border-border rounded-md text-[12px] font-mono uppercase tracking-wider text-text-primary focus:border-tactical-orange/60 focus:outline-none"
+          >
+            <option value="ttk">TTK</option>
+            <option value="rpm">RPM</option>
+            <option value="mag">MAG</option>
+            <option value="damage">DMG</option>
+          </select>
+        </div>
+        <div className="flex-1 flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+          {CATEGORIES.map((c) => {
+            const active = c === category;
+            return (
+              <button
+                key={c}
+                onClick={() => {
+                  setCategory(c);
+                  setExpandedId(null);
+                }}
+                className={
+                  'px-3 py-2 rounded-md border text-[12px] font-medium tracking-tight transition-colors flex-shrink-0 ' +
+                  (active
+                    ? 'bg-tactical-orange/10 border-tactical-orange text-text-primary'
+                    : 'bg-bg-card border-border text-text-secondary hover:text-text-primary hover:border-border-accent')
+                }
+              >
+                {c}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Distance tabs */}
-      <div className="flex border-b border-border">
+      {/* Range tabs */}
+      <div className="flex border-b border-border overflow-x-auto">
         {RANGE_BANDS.map((b) => {
           const active = b.id === rangeId;
           return (
@@ -524,7 +628,7 @@ export default function Arsenal() {
               key={b.id}
               onClick={() => setRangeId(b.id)}
               className={
-                'flex-1 py-3 text-center text-sm relative transition-colors ' +
+                'flex-1 min-w-[88px] py-2.5 text-center text-[11px] font-mono uppercase tracking-[0.14em] relative transition-colors ' +
                 (active ? 'text-tactical-orange' : 'text-text-secondary hover:text-text-primary')
               }
             >
@@ -535,128 +639,6 @@ export default function Arsenal() {
         })}
       </div>
 
-      {/* Compare bar */}
-      {compare.length > 0 && (
-        <div className="border border-tactical-orange/40 bg-tactical-orange/5 rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between gap-3 p-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-text-secondary">Comparing</span>
-              {compareWeapons.map((w, i) => (
-                <button
-                  key={w.id}
-                  onClick={() => toggleCompare(w.id)}
-                  className="flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-bg-card border border-border rounded-md text-xs hover:border-negative/60 hover:text-negative transition-colors group"
-                >
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COMPARE_PALETTE[i] }} />
-                  <span className="text-text-primary group-hover:text-negative">{w.name}</span>
-                  {w.equippedCount > 0 && (
-                    <span className="text-text-muted group-hover:text-negative">· {w.equippedCount}</span>
-                  )}
-                  <span className="text-text-muted group-hover:text-negative">×</span>
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => setShowCompare((v) => !v)}
-                className="px-3 py-1.5 text-xs text-text-primary border border-border rounded-md hover:border-tactical-orange/60 transition-colors"
-              >
-                {showCompare ? 'Hide compare' : 'Open compare'}
-              </button>
-              <button
-                onClick={() => {
-                  setCompare([]);
-                  setShowCompare(false);
-                }}
-                className="px-3 py-1.5 text-xs text-text-muted hover:text-negative transition-colors"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-          {showCompare && compareWeapons.length > 0 && (
-            <div className="border-t border-tactical-orange/30 bg-bg-card/40 p-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                <div>
-                  <div className="text-xs text-text-secondary">Compare weapons</div>
-                  <div className="text-[10px] text-text-muted mt-0.5">
-                    Values include currently equipped attachments.
-                  </div>
-                </div>
-                <div className="inline-flex self-start sm:self-auto rounded-md border border-border bg-bg-primary/70 p-0.5">
-                  {(['chart', 'table'] as const).map((view) => (
-                    <button
-                      key={view}
-                      type="button"
-                      onClick={() => setCompareView(view)}
-                      className={
-                        'px-3 py-1.5 rounded text-xs font-medium capitalize transition-colors ' +
-                        (compareView === view
-                          ? 'bg-tactical-orange/15 text-tactical-orange'
-                          : 'text-text-secondary hover:text-text-primary')
-                      }
-                    >
-                      {view}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {compareView === 'chart' ? (
-                <div>
-                  <div className="text-xs text-text-secondary mb-2">TTK over distance (ms)</div>
-                  <div className="h-[260px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-                        <CartesianGrid stroke="rgba(148,163,184,0.1)" strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="distance"
-                          type="number"
-                          domain={[0, 120]}
-                          ticks={[0, 10, 20, 35, 50, 75, 100, 120]}
-                          stroke="#475569"
-                          tick={{ fill: '#94a3b8', fontSize: 11 }}
-                          label={{ value: 'distance (m)', position: 'insideBottom', offset: -2, fill: '#64748b', fontSize: 11 }}
-                        />
-                        <YAxis stroke="#475569" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: '#0a0f1a',
-                            border: '1px solid #334155',
-                            borderRadius: 8,
-                            fontSize: 12,
-                          }}
-                          labelStyle={{ color: '#f1f5f9' }}
-                          formatter={(value, name) => {
-                            const weapon = compareWeapons.find((w) => w.id === name);
-                            return [`${value} ms`, weapon?.name ?? String(name)];
-                          }}
-                          labelFormatter={(v) => `${v} m`}
-                        />
-                        {compareWeapons.map((w, i) => (
-                          <Line
-                            key={w.id}
-                            type="linear"
-                            dataKey={w.id}
-                            stroke={COMPARE_PALETTE[i]}
-                            strokeWidth={2}
-                            dot={false}
-                            activeDot={{ r: 5 }}
-                            isAnimationActive={false}
-                          />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              ) : (
-                <CompareTable weapons={compareWeapons} />
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Weapon rows */}
       <div className="space-y-2">
         {filtered.length === 0 && (
@@ -664,102 +646,545 @@ export default function Arsenal() {
             No weapons match.
           </div>
         )}
-
-        {filtered.map((w) => {
-          const expanded = expandedId === w.id;
-          const inCompare = compare.includes(w.id);
-          const stripe = CATEGORY_STRIPE[w.category] ?? '#f97316';
-          const attachments = data.attachmentsByWeapon[w.name] ?? [];
-          const selectedAttachments = selectedAttachmentsForWeapon(attachments, equipped[w.id]);
-          const calculated = applyAttachments(w, selectedAttachments);
-          const ttk = averageTtk(calculated, range);
-          return (
-            <div
-              key={w.id}
-              className={
-                'border rounded-lg overflow-hidden transition-colors ' +
-                (expanded ? 'border-tactical-orange/40 bg-bg-card' : 'border-border bg-bg-card hover:border-border-accent')
-              }
-            >
-              <button
-                onClick={() => setExpandedId(expanded ? null : w.id)}
-                className="w-full flex items-stretch text-left"
-              >
-                {/* Left edge stripe */}
-                <div className="w-1 flex-shrink-0" style={{ backgroundColor: stripe }} />
-
-                <div className="flex-1 flex items-center gap-4 px-4 py-4">
-                  {/* Name + category + chips */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2.5 mb-1.5">
-                      <span className="text-base font-semibold text-text-primary tracking-tight">{w.name}</span>
-                      <span className="text-xs text-text-muted">{w.category}</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                      <span className="px-2 py-0.5 bg-tactical-orange/15 text-tactical-orange rounded-md font-medium">
-                        {attachments.length} Attachments
-                      </span>
-                      {selectedAttachments.length > 0 && (
-                        <span className="px-2 py-0.5 bg-positive/10 text-positive rounded-md font-medium">
-                          {selectedAttachments.length} Equipped
-                        </span>
-                      )}
-                      <span className="px-2 py-0.5 bg-bg-primary text-text-secondary rounded-md">
-                        {calculated.rpm} RPM
-                      </span>
-                      <span className="px-2 py-0.5 bg-bg-primary text-text-secondary rounded-md">
-                        {calculated.magSize} mag
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* TTK badge */}
-                  <div className="px-3 py-2 bg-bg-primary border border-border rounded-md text-right flex-shrink-0">
-                    <div className="text-[10px] text-text-muted uppercase tracking-wider">TTK</div>
-                    <div className="text-base font-semibold text-tactical-orange leading-none mt-0.5">
-                      {ttk !== null ? `${ttk.toFixed(0)}ms` : '—'}
-                    </div>
-                  </div>
-
-                  {/* Weapon image */}
-                  <div className="w-[88px] h-12 flex items-center justify-center flex-shrink-0">
-                    <WeaponImage name={w.name} className="max-w-full max-h-full object-contain" />
-                  </div>
-
-                  {/* Chevron */}
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    className={'text-text-muted transition-transform flex-shrink-0 ' + (expanded ? 'rotate-180' : '')}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </div>
-              </button>
-
-              {expanded && (
-                <ExpandedDetail
-                  calculatedWeapon={calculated}
-                  attachments={attachments}
-                  equippedBySlot={equipped[w.id] ?? {}}
-                  activeRange={range}
-                  inCompare={inCompare}
-                  onToggleCompare={() => toggleCompare(w.id)}
-                  onEquip={(slot, attachmentId) => setEquippedAttachment(w.id, slot, attachmentId)}
-                  onReset={() => resetEquipped(w.id)}
-                />
-              )}
-            </div>
-          );
-        })}
+        {filtered.map(({ weapon, calculated, attachments, selectedAtts, ttk }) => (
+          <WeaponRow
+            key={weapon.id}
+            weapon={weapon}
+            calculated={calculated}
+            ttk={ttk}
+            attachments={attachments}
+            equippedCount={selectedAtts.length}
+            range={range}
+            sortMetric={sortMetric}
+            expanded={expandedId === weapon.id}
+            onToggle={() => setExpandedId(expandedId === weapon.id ? null : weapon.id)}
+            inCompare={compare.includes(weapon.id)}
+            onCompare={() => toggleCompare(weapon.id)}
+            equippedBySlot={equipped[weapon.id] ?? {}}
+            onEquip={(slot, id) => setEquippedAttachment(weapon.id, slot, id)}
+            onReset={() => resetEquipped(weapon.id)}
+          />
+        ))}
       </div>
 
       <div className="text-[11px] text-text-muted text-center pt-2">
         Weapon data via <a href="https://battlefinity.gg" className="hover:text-tactical-orange" target="_blank" rel="noreferrer">battlefinity.gg</a> · {data.weapons.length} weapons cataloged
+      </div>
+
+      {/* Compare dock */}
+      {compare.length > 0 && (
+        <CompareDock
+          weapons={compareWeapons}
+          onRemove={(id) => toggleCompare(id)}
+          onOpen={() => setShowCompare(true)}
+          onClear={() => {
+            setCompare([]);
+            setShowCompare(false);
+          }}
+        />
+      )}
+
+      {/* Compare overlay */}
+      {showCompare && compareWeapons.length > 0 && (
+        <CompareOverlay
+          weapons={compareWeapons}
+          onClose={() => setShowCompare(false)}
+          onRemove={(id) => toggleCompare(id)}
+        />
+      )}
+    </div>
+  );
+}
+
+function WeaponRow({
+  weapon,
+  calculated,
+  ttk,
+  attachments,
+  equippedCount,
+  range,
+  sortMetric,
+  expanded,
+  onToggle,
+  inCompare,
+  onCompare,
+  equippedBySlot,
+  onEquip,
+  onReset,
+}: {
+  weapon: Weapon;
+  calculated: CalculatedWeapon;
+  ttk: number | null;
+  attachments: AttachmentMod[];
+  equippedCount: number;
+  range: typeof RANGE_BANDS[number];
+  sortMetric: SortMetric;
+  expanded: boolean;
+  onToggle: () => void;
+  inCompare: boolean;
+  onCompare: () => void;
+  equippedBySlot: EquippedBySlot;
+  onEquip: (slot: string, attachmentId: string | null) => void;
+  onReset: () => void;
+}) {
+  const rightMetric = useMemo(() => {
+    switch (sortMetric) {
+      case 'rpm':
+        return { label: 'RPM', value: formatNumber(calculated.rpm) };
+      case 'mag':
+        return { label: 'MAG', value: formatNumber(calculated.magSize) };
+      case 'damage':
+        return { label: 'DMG', value: formatNumber(calculated.damage[0]?.chest ?? 0) };
+      case 'ttk':
+      default:
+        return { label: `${range.label} TTK`, value: ttk !== null ? `${Math.round(ttk)}ms` : '—' };
+    }
+  }, [sortMetric, calculated, ttk, range]);
+
+  return (
+    <div
+      className={
+        'border rounded-lg overflow-hidden transition-colors bg-bg-card ' +
+        (expanded ? 'border-tactical-orange/50' : 'border-border hover:border-border-accent')
+      }
+    >
+      <div className="w-full flex items-stretch">
+        {/* Left edge stripe */}
+        <div
+          className="w-[3px] flex-shrink-0 bg-tactical-orange"
+          style={{ opacity: expanded ? 1 : 0.6 }}
+        />
+        {/* Main button: image + name + chips + sparkline + hero TTK + chevron */}
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-3 sm:gap-4 text-left py-3 sm:py-4 px-3 sm:px-4 min-w-0"
+        >
+          <div className="flex items-center justify-center flex-shrink-0 w-[64px] h-[32px] sm:w-[96px] sm:h-[44px]">
+            <WeaponSilhouette name={weapon.name} className="max-w-full max-h-full object-contain" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 min-w-0">
+              <span className="font-semibold text-text-primary tracking-tight text-[14px] sm:text-[15px] truncate">{weapon.name}</span>
+              <span className="text-[10px] uppercase tracking-[0.14em] text-text-muted font-mono hidden sm:inline">{weapon.category}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
+              <span className="px-1.5 py-0.5 rounded bg-bg-primary text-text-secondary font-mono tabular-nums">{calculated.rpm} RPM</span>
+              <span className="px-1.5 py-0.5 rounded bg-bg-primary text-text-secondary font-mono tabular-nums">{calculated.magSize} MAG</span>
+              {equippedCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded font-mono bg-tactical-orange/15 text-tactical-orange">{equippedCount} EQUIPPED</span>
+              )}
+              <span className="text-text-muted font-mono hidden sm:inline">{attachments.length} attachments</span>
+            </div>
+          </div>
+          {/* Sparkline — md+ only */}
+          <div className="hidden md:flex flex-col items-end gap-1 flex-shrink-0 pr-1">
+            <span className="text-[9px] uppercase tracking-[0.14em] text-text-muted font-mono">TTK · 0–120m</span>
+            <Sparkline weapon={calculated} />
+          </div>
+          {/* Hero metric */}
+          <div className="text-right flex-shrink-0 min-w-[64px] sm:min-w-[80px]">
+            <div className="text-[9px] uppercase tracking-[0.14em] text-text-muted font-mono">{rightMetric.label}</div>
+            <div className="font-display text-[22px] sm:text-[28px] leading-none mt-0.5 tabular-nums text-tactical-orange">
+              {rightMetric.value}
+            </div>
+          </div>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={'text-text-muted transition-transform flex-shrink-0 ' + (expanded ? 'rotate-180' : '')}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {/* Compare toggle — sibling, not nested in the row button */}
+        <button
+          type="button"
+          onClick={onCompare}
+          title={inCompare ? 'Remove from compare' : 'Add to compare'}
+          className={
+            'flex-shrink-0 w-9 my-3 mr-2 sm:mr-3 ml-1 rounded-md border flex items-center justify-center transition-colors ' +
+            (inCompare
+              ? 'border-tactical-orange text-tactical-orange bg-tactical-orange/10'
+              : 'border-border text-text-muted hover:text-text-primary hover:border-border-accent')
+          }
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {inCompare ? (
+              <polyline points="20 6 9 17 4 12" />
+            ) : (
+              <>
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </>
+            )}
+          </svg>
+        </button>
+      </div>
+      {expanded && (
+        <ExpandedDetail
+          calculatedWeapon={calculated}
+          attachments={attachments}
+          equippedBySlot={equippedBySlot}
+          activeRange={range}
+          onEquip={onEquip}
+          onReset={onReset}
+          ttk={ttk}
+        />
+      )}
+    </div>
+  );
+}
+
+function ExpandedDetail({
+  calculatedWeapon,
+  attachments,
+  equippedBySlot,
+  activeRange,
+  onEquip,
+  onReset,
+  ttk,
+}: {
+  calculatedWeapon: CalculatedWeapon;
+  attachments: AttachmentMod[];
+  equippedBySlot: EquippedBySlot;
+  activeRange: typeof RANGE_BANDS[number];
+  onEquip: (slot: string, attachmentId: string | null) => void;
+  onReset: () => void;
+  ttk: number | null;
+}) {
+  const attachmentsBySlot = useMemo(() => {
+    const map: Record<string, AttachmentMod[]> = {};
+    for (const a of attachments) {
+      const list = map[a.slot] ?? (map[a.slot] = []);
+      list.push(a);
+    }
+    return map;
+  }, [attachments]);
+  const slots = Object.keys(attachmentsBySlot).sort();
+  const [activeSlot, setActiveSlot] = useState<string | null>(null);
+  const selectedSlot = activeSlot && slots.includes(activeSlot) ? activeSlot : slots[0];
+  const activeOptions = selectedSlot ? attachmentsBySlot[selectedSlot] : [];
+  const equippedCount = Object.keys(equippedBySlot).length;
+
+  return (
+    <div className="border-t border-border bg-bg-primary/40">
+      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,360px)] lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)] gap-px bg-border/40">
+        {/* Left: stats + damage cards + sparkline */}
+        <div className="bg-bg-card p-4 sm:p-5 space-y-5">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-[10px] uppercase tracking-[0.18em] text-text-muted font-mono">Stats</h4>
+              <span className="text-[10px] text-text-muted font-mono">{equippedCount} attachments equipped</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Stat label="RPM" value={calculatedWeapon.rpm} />
+              <Stat label="MAG" value={calculatedWeapon.magSize} />
+              <Stat label="BV" value={calculatedWeapon.bv} suffix="m/s" />
+              <Stat label="ADS" value={calculatedWeapon.ads} suffix="ms" />
+              <StatBar label="Mobility" value={calculatedWeapon.mobility} max={100} />
+              <StatBar label="Control" value={calculatedWeapon.control} max={100} />
+              <StatBar label="Hipfire" value={calculatedWeapon.hipfire} max={100} />
+              <StatBar label="Precision" value={calculatedWeapon.precision} max={100} />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2 gap-3">
+              <h4 className="text-[10px] uppercase tracking-[0.18em] text-text-muted font-mono">Damage by range</h4>
+              <span className="text-[10px] font-mono text-text-muted">
+                {activeRange.label} avg{' '}
+                <span className="font-semibold tabular-nums text-tactical-orange">
+                  {ttk !== null ? `${Math.round(ttk)}ms` : '—'}
+                </span>
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1.5">
+              {calculatedWeapon.damage.slice(0, 5).map((d, i) => {
+                const next = calculatedWeapon.damage[i + 1];
+                const inBand =
+                  activeRange.maxDistance >= d.dropoff && activeRange.minDistance < (next?.dropoff ?? Infinity);
+                return (
+                  <div
+                    key={i}
+                    className={
+                      'p-2.5 rounded-md border ' +
+                      (inBand
+                        ? 'border-tactical-orange/60 bg-tactical-orange/5'
+                        : 'border-border bg-bg-primary/60')
+                    }
+                  >
+                    <div className="text-[10px] text-text-muted font-mono">≥ {d.dropoff}m</div>
+                    <div className="text-[16px] font-semibold text-text-primary mt-0.5 tabular-nums">
+                      {d.chest}
+                      <span className="text-[10px] text-text-muted ml-1 font-normal">dmg</span>
+                    </div>
+                    <div className="text-[10px] text-text-muted mt-0.5 font-mono tabular-nums">
+                      {d.shots_to_kill} STK
+                    </div>
+                    <div className="text-[10px] mt-0.5 font-mono tabular-nums text-tactical-orange">
+                      {Math.round(d.ttk)}ms
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-[10px] uppercase tracking-[0.18em] text-text-muted font-mono">TTK over distance</h4>
+              <span className="text-[10px] font-mono text-text-muted">0–120m</span>
+            </div>
+            <BigSparkline weapon={calculatedWeapon} />
+          </div>
+        </div>
+
+        {/* Right: gunsmith */}
+        <div className="bg-bg-card p-4 sm:p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-[10px] uppercase tracking-[0.18em] text-text-muted font-mono">Gunsmith</h4>
+            {equippedCount > 0 && (
+              <button
+                onClick={onReset}
+                className="px-2 py-1 text-[10px] font-mono text-text-muted hover:text-negative border border-border rounded transition-colors"
+              >
+                RESET
+              </button>
+            )}
+          </div>
+          {slots.length === 0 ? (
+            <div className="text-xs text-text-muted py-6 text-center">No attachments cataloged</div>
+          ) : (
+            <>
+              <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1">
+                {slots.map((slot) => {
+                  const active = slot === selectedSlot;
+                  const eq = Boolean(equippedBySlot[slot]);
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      onClick={() => setActiveSlot(slot)}
+                      className={
+                        'flex-shrink-0 px-3 py-1.5 rounded-md border text-[11px] font-medium font-mono uppercase tracking-wider transition-colors ' +
+                        (active
+                          ? 'border-tactical-orange text-text-primary bg-tactical-orange/10'
+                          : 'border-border text-text-secondary hover:text-text-primary hover:border-border-accent')
+                      }
+                    >
+                      {slot}
+                      {eq && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full align-middle bg-tactical-orange" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="space-y-1 max-h-[320px] overflow-y-auto pr-1">
+                <AttachmentOption
+                  active={selectedSlot ? !equippedBySlot[selectedSlot] : true}
+                  label="Factory"
+                  onClick={() => selectedSlot && onEquip(selectedSlot, null)}
+                />
+                {activeOptions.map((a) => (
+                  <AttachmentOption
+                    key={a.id}
+                    active={selectedSlot ? equippedBySlot[selectedSlot] === a.id : false}
+                    label={a.name}
+                    attachment={a}
+                    onClick={() => selectedSlot && onEquip(selectedSlot, a.id)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompareDock({
+  weapons,
+  onRemove,
+  onOpen,
+  onClear,
+}: {
+  weapons: ComparedWeapon[];
+  onRemove: (id: string) => void;
+  onOpen: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-2rem)]">
+      <div className="bg-bg-card/95 border border-border-accent rounded-lg shadow-2xl flex items-center gap-2 sm:gap-3 p-2 sm:p-2.5 backdrop-blur">
+        <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-wider text-text-muted pl-1.5">Compare</span>
+        <div className="flex items-center gap-1.5 flex-wrap max-w-[60vw] sm:max-w-md">
+          {weapons.map((wp, i) => (
+            <button
+              key={wp.id}
+              onClick={() => onRemove(wp.id)}
+              className="group flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-bg-primary border border-border rounded text-[11px] hover:border-negative/60 transition-colors"
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COMPARE_PALETTE[i] }} />
+              <span className="text-text-primary group-hover:text-negative max-w-[80px] sm:max-w-[120px] truncate">
+                {wp.name}
+              </span>
+              <span className="text-text-muted group-hover:text-negative">×</span>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={onOpen}
+          className="px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider rounded transition-colors bg-tactical-orange text-bg-primary hover:bg-tactical-orange/90"
+        >
+          Open
+        </button>
+        <button
+          onClick={onClear}
+          className="px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-text-muted hover:text-negative transition-colors"
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CompareOverlay({
+  weapons,
+  onClose,
+  onRemove,
+}: {
+  weapons: ComparedWeapon[];
+  onClose: () => void;
+  onRemove: (id: string) => void;
+}) {
+  const [view, setView] = useState<CompareView>('chart');
+
+  const chartData = useMemo(() => {
+    if (weapons.length === 0) return [];
+    return Array.from({ length: 121 }, (_, distance) => {
+      const row: Record<string, number> = { distance };
+      for (const w of weapons) {
+        const ttk = ttkAtDistance(w, distance);
+        if (ttk !== null) row[w.id] = Math.round(ttk);
+      }
+      return row;
+    });
+  }, [weapons]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-bg-card border border-border-accent rounded-t-xl md:rounded-xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div className="flex items-center gap-3 min-w-0">
+            <h3 className="font-display text-[20px] tracking-tight text-text-primary">COMPARE</h3>
+            <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">
+              {weapons.length} weapon{weapons.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="inline-flex bg-bg-primary rounded border border-border p-0.5">
+              {(['chart', 'table'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={
+                    'px-3 py-1 text-[11px] font-mono uppercase tracking-wider rounded transition-colors ' +
+                    (view === v ? 'bg-tactical-orange/15 text-tactical-orange' : 'text-text-muted hover:text-text-primary')
+                  }
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded border border-border text-text-muted hover:text-text-primary flex items-center justify-center"
+              aria-label="Close"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-border bg-bg-primary/40">
+          {weapons.map((wp, i) => (
+            <button
+              key={wp.id}
+              onClick={() => onRemove(wp.id)}
+              className="group flex items-center gap-2 pl-2 pr-2.5 py-1 rounded border border-border bg-bg-card text-[12px] hover:border-negative/60 transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COMPARE_PALETTE[i] }} />
+              <span className="text-text-primary group-hover:text-negative">{wp.name}</span>
+              {wp.equippedCount > 0 && (
+                <span className="text-text-muted group-hover:text-negative">· {wp.equippedCount}</span>
+              )}
+              <span className="text-text-muted group-hover:text-negative">×</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+          {view === 'chart' ? (
+            <div className="bg-bg-primary/60 border border-border rounded-lg p-3">
+              <div className="text-xs text-text-secondary mb-2">TTK over distance (ms)</div>
+              <div className="h-[260px] sm:h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.1)" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="distance"
+                      type="number"
+                      domain={[0, 120]}
+                      ticks={[0, 10, 20, 35, 50, 75, 100, 120]}
+                      stroke="#475569"
+                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      label={{ value: 'distance (m)', position: 'insideBottom', offset: -2, fill: '#64748b', fontSize: 11 }}
+                    />
+                    <YAxis stroke="#475569" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#0a0f1a',
+                        border: '1px solid #334155',
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      labelStyle={{ color: '#f1f5f9' }}
+                      formatter={(value, name) => {
+                        const weapon = weapons.find((w) => w.id === name);
+                        return [`${value} ms`, weapon?.name ?? String(name)];
+                      }}
+                      labelFormatter={(v) => `${v} m`}
+                    />
+                    {weapons.map((w, i) => (
+                      <Line
+                        key={w.id}
+                        type="linear"
+                        dataKey={w.id}
+                        stroke={COMPARE_PALETTE[i]}
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 5 }}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          ) : (
+            <CompareTable weapons={weapons} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -771,62 +1196,61 @@ function CompareTable({ weapons }: { weapons: ComparedWeapon[] }) {
       {COMPARE_SECTIONS.map((section) => {
         const primaryMetric = section.metrics[0];
         const sortedWeapons = [...weapons].sort((a, b) => compareMetricValues(primaryMetric, a, b));
-
         return (
-          <section
-            key={section.title}
-            className="border-t border-tactical-orange/25 pt-4 first:border-t-0 first:pt-0"
-          >
+          <section key={section.title}>
             <div className="flex items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-semibold text-text-primary">{section.title}</h3>
-              <span className="text-[10px] text-text-muted">sorted by {primaryMetric.label}</span>
+              <h4 className="text-[10px] uppercase tracking-[0.18em] font-mono text-text-muted">{section.title}</h4>
+              <span className="text-[10px] font-mono text-text-muted">sorted by {primaryMetric.label}</span>
             </div>
-            <div className="overflow-x-auto rounded-lg border border-border bg-bg-primary/40">
-              <table className="w-full min-w-[720px] border-collapse text-xs">
+            <div className="overflow-x-auto rounded border border-border">
+              <table className="w-full min-w-[640px] border-collapse text-[12px]">
                 <thead>
-                  <tr className="border-b border-border bg-bg-primary/70">
-                    <th className="w-[180px] px-3 py-2 text-left font-medium text-text-muted">Gun</th>
-                    {section.metrics.map((metric) => (
-                      <th key={metric.id} className="px-3 py-2 text-center font-medium text-text-muted">
-                        {metric.label}
+                  <tr className="bg-bg-primary/70 border-b border-border">
+                    <th className="w-[160px] px-3 py-2 text-left font-medium text-text-muted font-mono uppercase tracking-wider text-[10px]">Weapon</th>
+                    {section.metrics.map((m) => (
+                      <th
+                        key={m.id}
+                        className="px-3 py-2 text-center font-medium text-text-muted font-mono uppercase tracking-wider text-[10px]"
+                      >
+                        {m.label}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedWeapons.map((weapon) => (
-                    <tr key={weapon.id} className="border-b border-border/70 last:border-b-0">
+                  {sortedWeapons.map((wp) => (
+                    <tr key={wp.id} className="border-b border-border/60 last:border-b-0">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <span
                             className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: COMPARE_PALETTE[weapons.findIndex((w) => w.id === weapon.id)] }}
+                            style={{ backgroundColor: COMPARE_PALETTE[weapons.findIndex((w) => w.id === wp.id)] }}
                           />
                           <div className="min-w-0">
-                            <div className="font-semibold text-text-primary truncate">{weapon.name}</div>
+                            <div className="font-semibold text-text-primary truncate">{wp.name}</div>
                             <div className="text-[10px] text-text-muted truncate">
-                              {weapon.equippedCount > 0 ? `${weapon.equippedCount} equipped` : 'Factory'}
+                              {wp.equippedCount > 0 ? `${wp.equippedCount} equipped` : 'Factory'}
                             </div>
                           </div>
                         </div>
                       </td>
-                      {section.metrics.map((metric, metricIndex) => {
-                        const value = metric.getValue(weapon);
-                        const rank = metricRank(metric, weapon, weapons);
-                        const isPrimary = metricIndex === 0;
-                        const cellClass =
+                      {section.metrics.map((m, mi) => {
+                        const value = m.getValue(wp);
+                        const rank = metricRank(m, wp, weapons);
+                        const cls =
                           rank === 0
-                            ? isPrimary
-                              ? 'bg-tactical-orange/45 text-text-primary font-semibold'
-                              : 'bg-tactical-orange/25 text-text-primary font-semibold'
+                            ? mi === 0
+                              ? 'bg-tactical-orange/45 text-text-primary font-bold'
+                              : 'bg-tactical-orange/20 text-text-primary font-semibold'
                             : rank === 1
-                              ? isPrimary
-                                ? 'bg-tactical-orange/25 text-text-primary'
-                                : 'bg-tactical-orange/10 text-text-secondary'
-                              : 'bg-bg-card/35 text-text-secondary';
+                              ? 'bg-tactical-orange/10 text-text-secondary'
+                              : 'text-text-secondary';
                         return (
-                          <td key={metric.id} className={`px-3 py-2 text-center border-l border-border/60 ${cellClass}`}>
-                            {value === null ? '-' : metric.format(value)}
+                          <td
+                            key={m.id}
+                            className={`px-3 py-2 text-center border-l border-border/60 tabular-nums font-mono text-[11px] ${cls}`}
+                          >
+                            {value === null ? '—' : m.format(value)}
                           </td>
                         );
                       })}
@@ -842,196 +1266,30 @@ function CompareTable({ weapons }: { weapons: ComparedWeapon[] }) {
   );
 }
 
-function ExpandedDetail({
-  calculatedWeapon,
-  attachments,
-  equippedBySlot,
-  activeRange,
-  inCompare,
-  onToggleCompare,
-  onEquip,
-  onReset,
-}: {
-  calculatedWeapon: CalculatedWeapon;
-  attachments: AttachmentMod[];
-  equippedBySlot: EquippedBySlot;
-  activeRange: typeof RANGE_BANDS[number];
-  inCompare: boolean;
-  onToggleCompare: () => void;
-  onEquip: (slot: string, attachmentId: string | null) => void;
-  onReset: () => void;
-}) {
-  const [activeSlot, setActiveSlot] = useState<string | null>(null);
-  const attachmentsBySlot = useMemo(() => {
-    const map: Record<string, AttachmentMod[]> = {};
-    for (const a of attachments) {
-      const list = map[a.slot] ?? (map[a.slot] = []);
-      list.push(a);
-    }
-    return map;
-  }, [attachments]);
-  const slots = Object.keys(attachmentsBySlot).sort((a, b) => a.localeCompare(b));
-  const selectedSlot = activeSlot && slots.includes(activeSlot) ? activeSlot : slots[0];
-  const activeOptions = selectedSlot ? attachmentsBySlot[selectedSlot] : [];
-  const equippedCount = Object.keys(equippedBySlot).length;
-  const activeTtk = averageTtk(calculatedWeapon, activeRange);
-
+function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
   return (
-    <div className="border-t border-border/60 bg-bg-primary/40">
-      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_360px] lg:grid-cols-[minmax(0,1fr)_420px] gap-px bg-border/40">
-        {/* Stats + damage */}
-        <div className="bg-bg-card p-4 space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Stat label="RPM" value={calculatedWeapon.rpm} />
-            <Stat label="MAG" value={calculatedWeapon.magSize} />
-            <Stat label="BV" value={calculatedWeapon.bv} />
-            <Stat label="ADS" value={calculatedWeapon.ads} suffix="ms" />
-            <StatBar label="Mobility" value={calculatedWeapon.mobility} max={100} />
-            <StatBar label="Control" value={calculatedWeapon.control} max={100} />
-            <StatBar label="Hipfire" value={calculatedWeapon.hipfire} max={100} />
-            <StatBar label="Precision" value={calculatedWeapon.precision} max={100} />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <div className="text-xs text-text-secondary">Damage by range</div>
-              <div className="text-xs text-text-muted">
-                {activeRange.label} avg <span className="text-tactical-orange font-semibold">{activeTtk !== null ? `${Math.round(activeTtk)}ms` : '-'}</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-1.5">
-              {calculatedWeapon.damage.slice(0, 5).map((d, i) => {
-                const next = calculatedWeapon.damage[i + 1];
-                const inBand =
-                  activeRange.maxDistance >= d.dropoff && activeRange.minDistance < (next?.dropoff ?? Infinity);
-                return (
-                  <div
-                    key={i}
-                    className={
-                      'p-2 rounded-md border ' +
-                      (inBand
-                        ? 'border-tactical-orange/50 bg-tactical-orange/5'
-                        : 'border-border bg-bg-primary/60')
-                    }
-                  >
-                    <div className="text-[10px] text-text-muted">≥ {d.dropoff}m</div>
-                    <div className="text-sm font-semibold text-text-primary mt-0.5">
-                      {d.chest} <span className="text-[10px] text-text-muted font-normal">dmg</span>
-                    </div>
-                    <div className="text-[10px] text-text-muted mt-0.5">
-                      {d.shots_to_kill} shots
-                    </div>
-                    <div className="text-[10px] text-tactical-orange mt-0.5">
-                      {Math.round(d.ttk)}ms
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <button
-            onClick={onToggleCompare}
-            className={
-              'w-full py-2 rounded-md text-sm font-medium transition-colors border ' +
-              (inCompare
-                ? 'border-tactical-orange/60 bg-tactical-orange/10 text-tactical-orange'
-                : 'border-border bg-bg-primary hover:border-tactical-orange/60 text-text-primary')
-            }
-          >
-            {inCompare ? '✓ Added to compare' : 'Add to compare'}
-          </button>
-        </div>
-
-        {/* Attachments */}
-        <div className="bg-bg-card p-4">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <div className="text-xs text-text-secondary">
-                Attachment Equipper {attachments.length > 0 && <span className="text-text-muted">· {attachments.length}</span>}
-              </div>
-              <div className="text-[10px] text-text-muted mt-0.5">
-                {equippedCount} equipped across {slots.length} slots
-              </div>
-            </div>
-            {equippedCount > 0 && (
-              <button
-                onClick={onReset}
-                className="px-2.5 py-1.5 text-xs text-text-muted hover:text-negative border border-border rounded-md hover:border-negative/60 transition-colors"
-              >
-                Reset
-              </button>
-            )}
-          </div>
-          {slots.length === 0 && (
-            <div className="text-xs text-text-muted py-6 text-center">No attachments cataloged</div>
-          )}
-          {slots.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {slots.map((slot) => {
-                  const active = slot === selectedSlot;
-                  const equippedSlot = Boolean(equippedBySlot[slot]);
-                  return (
-                    <button
-                      key={slot}
-                      type="button"
-                      onClick={() => setActiveSlot(slot)}
-                      className={
-                        'flex-shrink-0 px-3 py-2 rounded-md border text-[11px] font-medium transition-colors ' +
-                        (active
-                          ? 'border-tactical-orange/70 bg-tactical-orange/10 text-text-primary'
-                          : 'border-border bg-bg-primary/60 text-text-secondary hover:text-text-primary hover:border-border-accent')
-                      }
-                    >
-                      {slot}
-                      {equippedSlot && <span className="ml-1 text-positive">●</span>}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedSlot && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="text-[10px] text-text-muted uppercase tracking-wider">{selectedSlot}</div>
-                    <div className="text-[10px] text-text-muted">
-                      {equippedBySlot[selectedSlot] ? 'Equipped' : 'Factory'}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-1">
-                    <AttachmentOption
-                      active={!equippedBySlot[selectedSlot]}
-                      label="Factory"
-                      onClick={() => onEquip(selectedSlot, null)}
-                    />
-                    {activeOptions.map((a) => (
-                      <AttachmentOption
-                        key={a.id}
-                        active={equippedBySlot[selectedSlot] === a.id}
-                        label={a.name}
-                        attachment={a}
-                        onClick={() => onEquip(selectedSlot, a.id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+    <div className="px-2.5 py-2 rounded-md bg-bg-primary/60 border border-border">
+      <div className="text-[9px] uppercase tracking-[0.14em] text-text-muted font-mono">{label}</div>
+      <div className="text-[15px] font-semibold text-text-primary mt-0.5 tabular-nums">
+        {value}
+        {suffix && <span className="text-[10px] text-text-muted ml-1 font-normal">{suffix}</span>}
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
+function StatBar({ label, value, max }: { label: string; value: number; max: number }) {
   return (
-    <div className="bg-bg-primary/60 rounded-md px-2.5 py-2">
-      <div className="text-[10px] text-text-muted uppercase tracking-wider">{label}</div>
-      <div className="text-base font-semibold text-text-primary mt-0.5">
-        {value}
-        {suffix && <span className="text-[10px] text-text-muted ml-1 font-normal">{suffix}</span>}
+    <div className="px-2.5 py-2 rounded-md bg-bg-primary/60 border border-border">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[9px] uppercase tracking-[0.14em] text-text-muted font-mono">{label}</span>
+        <span className="text-[11px] text-text-primary font-medium tabular-nums">{value}</span>
+      </div>
+      <div className="mt-1.5 h-[3px] bg-border rounded-full overflow-hidden">
+        <div
+          className="h-full bg-tactical-orange rounded-full"
+          style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
+        />
       </div>
     </div>
   );
@@ -1054,33 +1312,35 @@ function AttachmentOption({
       type="button"
       onClick={onClick}
       className={
-        'w-full min-h-10 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2.5 py-2 rounded-md border text-left transition-colors ' +
+        'w-full grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-2.5 py-2 rounded-md border text-left transition-colors ' +
         (active
-          ? 'bg-tactical-orange/10 border-tactical-orange/60'
-          : 'bg-bg-primary/60 border-transparent hover:border-border-accent hover:bg-bg-card-hover')
+          ? 'border-tactical-orange bg-tactical-orange/10'
+          : 'border-transparent bg-bg-primary/60 hover:bg-bg-card-hover hover:border-border-accent')
       }
     >
-      <span className={'text-xs truncate ' + (active ? 'text-text-primary font-semibold' : 'text-text-secondary')}>{label}</span>
+      <span className={'text-[12px] truncate ' + (active ? 'text-text-primary font-semibold' : 'text-text-secondary')}>
+        {label}
+      </span>
       {attachment && (
         <div className="flex flex-wrap gap-1 justify-end">
           {attachment.damageProfile && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-info/10 text-info">damage profile</span>
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-info/10 text-info">DMG PROFILE</span>
           )}
           {attachment.rangeMod && (
             <span
               className={
-                'px-1.5 py-0.5 rounded text-[10px] ' +
+                'px-1.5 py-0.5 rounded text-[9px] font-mono ' +
                 (attachment.rangeMod > 1 ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative')
               }
             >
-              range {formatModValue(Number(((attachment.rangeMod - 1) * 100).toFixed(1)))}%
+              RNG {attachment.rangeMod > 1 ? '+' : ''}{Math.round((attachment.rangeMod - 1) * 100)}%
             </span>
           )}
           {modEntries.map(([k, v]) => (
             <span
               key={k}
               className={
-                'px-1.5 py-0.5 rounded text-[10px] ' +
+                'px-1.5 py-0.5 rounded text-[9px] font-mono ' +
                 (v > 0 ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative')
               }
             >
@@ -1090,22 +1350,5 @@ function AttachmentOption({
         </div>
       )}
     </button>
-  );
-}
-
-function StatBar({ label, value, max }: { label: string; value: number; max: number }) {
-  return (
-    <div className="bg-bg-primary/60 rounded-md px-2.5 py-2">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[10px] text-text-muted uppercase tracking-wider">{label}</span>
-        <span className="text-[11px] text-text-primary font-medium">{value}</span>
-      </div>
-      <div className="mt-1.5 h-[3px] bg-border rounded-full overflow-hidden">
-        <div
-          className="h-full bg-tactical-orange rounded-full"
-          style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
-        />
-      </div>
-    </div>
   );
 }
