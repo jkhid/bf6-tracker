@@ -1203,10 +1203,16 @@ function CompareTable({ weapons }: { weapons: ComparedWeapon[] }) {
               <span className="text-[10px] font-mono text-text-muted">sorted by {primaryMetric.label}</span>
             </div>
             <div className="overflow-x-auto rounded border border-border">
-              <table className="w-full min-w-[640px] border-collapse text-[12px]">
+              <table className="w-full min-w-[640px] border-collapse text-[12px] table-fixed">
+                <colgroup>
+                  <col className="w-[160px]" />
+                  {section.metrics.map((m) => (
+                    <col key={m.id} style={{ width: `${100 / section.metrics.length}%` }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr className="bg-bg-primary/70 border-b border-border">
-                    <th className="w-[160px] px-3 py-2 text-left font-medium text-text-muted font-mono uppercase tracking-wider text-[10px]">Weapon</th>
+                    <th className="px-3 py-2 text-left font-medium text-text-muted font-mono uppercase tracking-wider text-[10px]">Weapon</th>
                     {section.metrics.map((m) => (
                       <th
                         key={m.id}
