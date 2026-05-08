@@ -9,6 +9,7 @@ import HeadToHead from '@/components/HeadToHead';
 import WeaponMeta from '@/components/WeaponMeta';
 import Sessions from '@/components/Sessions';
 import Arsenal from '@/components/Arsenal';
+import AskStats from '@/components/AskStats';
 import AddPlayerButton from '@/components/AddPlayerButton';
 import { cn } from '@/lib/utils';
 
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'h2h', label: 'Head-to-Head', icon: '⚔️' },
   { id: 'weapons', label: 'Weapon Meta', icon: '🔫' },
   { id: 'arsenal', label: 'Weapon Stats', icon: '🎯' },
+  { id: 'ask', label: 'Ask', icon: '💬' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -104,6 +106,8 @@ export default function Home() {
         {activeTab === 'weapons' && <WeaponMeta playerData={allPlayerData} />}
 
         {activeTab === 'arsenal' && <Arsenal />}
+
+        {activeTab === 'ask' && <AskStats />}
       </main>
 
       {/* Footer */}

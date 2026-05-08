@@ -10,65 +10,19 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-
-interface DamageEntry {
-  dropoff: number;
-  base_rpm: number;
-  final_rpm: number;
-  head: number;
-  neck: number;
-  chest: number;
-  stomach: number;
-  upperarm: number;
-  lowerarm: number;
-  upperleg: number;
-  lowerleg: number;
-  time_between_shots: number;
-  shots_to_kill: number;
-  ttk: number;
-  enemies_per_magazine: number;
-}
-
-interface Weapon {
-  id: string;
-  name: string;
-  category: string;
-  game: 'BF6-BR' | 'BF6';
-  rpm: number;
-  bv: number;
-  magSize: number;
-  hipfire: number;
-  reload: number;
-  ads: number;
-  control: number;
-  mobility: number;
-  precision: number;
-  headshotMultiplier: number;
-  obd: number;
-  damage: DamageEntry[];
-}
-
-interface AttachmentMod {
-  id: string;
-  name: string;
-  slot: string;
-  mods: Record<string, number>;
-  rangeMod: number | null;
-  damageProfile: DamageEntry[] | null;
-}
-
-const RANGE_BANDS = [
-  { id: 'cqc', label: '0–10m', minDistance: 0, maxDistance: 10 },
-  { id: 'short', label: '10m–40m', minDistance: 10, maxDistance: 40 },
-  { id: 'mid', label: '40m–80m', minDistance: 40, maxDistance: 80 },
-  { id: 'long', label: '80m–120m', minDistance: 80, maxDistance: 120 },
-] as const;
+import {
+  applyAttachments,
+  AttachmentMod,
+  averageTtk,
+  RANGE_BANDS,
+  selectedAttachmentsForWeapon,
+  ttkAtDistance,
+  Weapon,
+} from '@/lib/weapon-math';
 
 const CATEGORIES = ['Assault Rifle', 'SMG', 'Carbine', 'DMR', 'LMG', 'Sniper Rifle', 'Pistol', 'Shotgun'];
 
 const COMPARE_PALETTE = ['#ff6b1a', '#f59e0b', '#22d3ee', '#a855f7', '#22c55e'];
-const REDSEC_HEALTH = 200;
-const REDSEC_TICK_RATE = 30;
 const WEAPON_IMAGE_ALIASES: Record<string, string[]> = {
   'KORD 6P67': ['KRD-6P67'],
 };
@@ -90,112 +44,6 @@ type CompareSection = {
   title: string;
   metrics: CompareMetric[];
 };
-
-const STAT_MOD_FIELD: Record<string, keyof Omit<Weapon, 'id' | 'name' | 'category' | 'game' | 'damage'>> = {
-  rpm_mod: 'rpm',
-  bv_mod: 'bv',
-  mag_size_mod: 'magSize',
-  hipfire_mod: 'hipfire',
-  reload_mod: 'reload',
-  ads_mod: 'ads',
-  control_mod: 'control',
-  mobility_mod: 'mobility',
-  precision_mod: 'precision',
-  hsmultiplier_mod: 'headshotMultiplier',
-};
-
-function normalizeDamage(damage: DamageEntry[]): DamageEntry[] {
-  return damage
-    .map((d) => ({ ...d, dropoff: d.dropoff ?? 0 }))
-    .sort((a, b) => a.dropoff - b.dropoff);
-}
-
-function damageForBody(damage: DamageEntry): number {
-  return damage.stomach || damage.chest || damage.neck || damage.head || 0;
-}
-
-function recalculateDamage(damage: DamageEntry[], weapon: Weapon): DamageEntry[] {
-  return normalizeDamage(damage).map((d) => {
-    const bodyDamage = damageForBody(d);
-    const shotsToKill = bodyDamage > 0 ? Math.ceil(REDSEC_HEALTH / bodyDamage) : 0;
-    const timeBetweenShots = weapon.rpm > 0 ? 60000 / weapon.rpm : 0;
-    const ttk = shotsToKill > 0 ? (shotsToKill - 1) * timeBetweenShots + weapon.obd * 1000 : 0;
-    const enemiesPerMagazine = bodyDamage > 0 ? Math.floor(weapon.magSize / bodyDamage) : 0;
-    return {
-      ...d,
-      base_rpm: weapon.rpm,
-      final_rpm: weapon.rpm,
-      time_between_shots: timeBetweenShots,
-      shots_to_kill: shotsToKill,
-      ttk,
-      enemies_per_magazine: enemiesPerMagazine,
-    };
-  });
-}
-
-function applyAttachments(weapon: Weapon, attachments: AttachmentMod[]): CalculatedWeapon {
-  const next: Weapon = {
-    ...weapon,
-    damage: weapon.damage.map((d) => ({ ...d })),
-  };
-
-  for (const attachment of attachments) {
-    if (attachment.damageProfile?.length) {
-      next.damage = attachment.damageProfile.map((d) => ({ ...d }));
-    }
-  }
-
-  for (const attachment of attachments) {
-    for (const [key, value] of Object.entries(attachment.mods)) {
-      const field = STAT_MOD_FIELD[key];
-      if (!field) continue;
-      next[field] = Number((next[field] + value).toFixed(3));
-    }
-    if (attachment.rangeMod) {
-      next.damage = next.damage.map((d) => ({
-        ...d,
-        dropoff: d.dropoff ? Number((d.dropoff * attachment.rangeMod!).toFixed(2)) : 0,
-      }));
-    }
-  }
-
-  next.damage = recalculateDamage(next.damage, next);
-  return next;
-}
-
-function selectedAttachmentsForWeapon(
-  attachments: AttachmentMod[],
-  equippedBySlot: EquippedBySlot | undefined
-): AttachmentMod[] {
-  if (!equippedBySlot) return [];
-  return Object.values(equippedBySlot)
-    .map((id) => attachments.find((a) => a.id === id))
-    .filter((a): a is AttachmentMod => Boolean(a));
-}
-
-function ttkAtDistance(weapon: CalculatedWeapon, distance: number): number | null {
-  if (!weapon.damage || weapon.damage.length === 0) return null;
-  let chosen = weapon.damage[0];
-  for (const d of weapon.damage) {
-    if (d.dropoff <= distance) chosen = d;
-    else break;
-  }
-  const hitscanRange = weapon.bv > 0 ? weapon.bv / REDSEC_TICK_RATE : 0;
-  const travelMs = distance > hitscanRange && weapon.bv > 0 ? ((distance - hitscanRange) / weapon.bv) * 1000 : 0;
-  return chosen.ttk + travelMs;
-}
-
-function averageTtk(weapon: CalculatedWeapon, range: typeof RANGE_BANDS[number]): number | null {
-  let total = 0;
-  let count = 0;
-  for (let distance = range.minDistance; distance <= range.maxDistance; distance += 1) {
-    const ttk = ttkAtDistance(weapon, distance);
-    if (ttk === null) continue;
-    total += ttk;
-    count += 1;
-  }
-  return count > 0 ? total / count : null;
-}
 
 const formatMs = (value: number) => `${Math.round(value)} ms`;
 const formatNumber = (value: number) => String(Math.round(value));

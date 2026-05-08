@@ -10,6 +10,7 @@
     "backfill:sessions": "node scripts/backfill-session-events.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.1",
     "@supabase/supabase-js": "^2.103.0",
     "next": "16.2.3",
     "react": "19.2.4",
