@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { usePlayers } from '@/hooks/usePlayers';
 import { usePlayerStats } from '@/hooks/usePlayerStats';
 import Leaderboard from '@/components/Leaderboard';
@@ -14,21 +14,72 @@ import AddPlayerButton from '@/components/AddPlayerButton';
 import { cn } from '@/lib/utils';
 
 const TABS = [
+  { id: 'ask', label: 'Ask', icon: '💬' },
   { id: 'leaderboard', label: 'Leaderboard', icon: '🏆' },
   { id: 'sessions', label: 'Sessions', icon: '📊' },
   { id: 'players', label: 'Player Cards', icon: '👤' },
   { id: 'h2h', label: 'Head-to-Head', icon: '⚔️' },
   { id: 'weapons', label: 'Weapon Meta', icon: '🔫' },
   { id: 'arsenal', label: 'Weapon Stats', icon: '🎯' },
-  { id: 'ask', label: 'Ask', icon: '💬' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
+function PageAskHeader({
+  title,
+  placeholder,
+  onAsk,
+}: {
+  title: string;
+  placeholder: string;
+  onAsk: (question: string) => void;
+}) {
+  const [question, setQuestion] = useState('');
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = question.trim();
+    if (!trimmed) return;
+    onAsk(trimmed);
+    setQuestion('');
+  }
+
+  return (
+    <section className="mb-4 rounded-xl border border-border bg-bg-card/80 px-3 py-3 shadow-[0_0_24px_rgba(245,158,11,0.05)]">
+      <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="sm:w-44">
+          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-muted">
+            {title}
+          </div>
+        </div>
+        <input
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent-gold focus:shadow-[0_0_0_3px_rgba(245,158,11,0.12)]"
+        />
+        <button
+          type="submit"
+          disabled={!question.trim()}
+          className="rounded-lg border border-accent-gold/50 bg-accent-gold px-4 py-2 text-sm font-semibold text-bg-primary transition-colors hover:bg-accent-amber disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Ask
+        </button>
+      </form>
+    </section>
+  );
+}
+
 export default function Home() {
   const { players, loading: playersLoading, error: playersError, addPlayer } = usePlayers();
   const { allPlayerData, refresh } = usePlayerStats(players);
-  const [activeTab, setActiveTab] = useState<TabId>('leaderboard');
+  const [activeTab, setActiveTab] = useState<TabId>('ask');
+  const [pendingAsk, setPendingAsk] = useState<{ id: number; question: string } | null>(null);
+
+  function submitPageQuestion(question: string) {
+    setPendingAsk({ id: Date.now(), question });
+    setActiveTab('ask');
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -89,7 +140,18 @@ export default function Home() {
           <div className="mb-4 text-sm text-text-muted">Loading tracked players...</div>
         )}
 
-        {activeTab === 'leaderboard' && <Leaderboard playerData={allPlayerData} />}
+        {activeTab === 'ask' && <AskStats pendingAsk={pendingAsk} />}
+
+        {activeTab === 'leaderboard' && (
+          <>
+            <PageAskHeader
+              title="Ask Stats"
+              placeholder="Ask about leaderboard K/D, win rate, recent matches..."
+              onAsk={submitPageQuestion}
+            />
+            <Leaderboard playerData={allPlayerData} />
+          </>
+        )}
 
         {activeTab === 'sessions' && <Sessions />}
 
@@ -105,9 +167,16 @@ export default function Home() {
 
         {activeTab === 'weapons' && <WeaponMeta playerData={allPlayerData} />}
 
-        {activeTab === 'arsenal' && <Arsenal />}
-
-        {activeTab === 'ask' && <AskStats />}
+        {activeTab === 'arsenal' && (
+          <>
+            <PageAskHeader
+              title="Ask Weapons"
+              placeholder="Ask about TTK, builds, recoil, weapon rankings..."
+              onAsk={submitPageQuestion}
+            />
+            <Arsenal />
+          </>
+        )}
       </main>
 
       {/* Footer */}

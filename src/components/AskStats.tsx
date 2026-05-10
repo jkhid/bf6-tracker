@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -52,7 +52,6 @@ type ChartSpec = {
   series?: { name: string; data: ChartPoint[] }[];
 };
 
-const STORAGE_KEY = 'bf6-ask-history-v1';
 const EXAMPLE_GROUPS = [
   {
     title: 'Player Statistics',
@@ -156,7 +155,7 @@ function ResultChart({ chart }: { chart?: ChartSpec }) {
         {chart.title && <div className="mb-2 text-[10px] uppercase tracking-wider text-text-muted">{chart.title}</div>}
         <div className="h-52">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chart.data.slice(0, 8)} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+            <BarChart data={chart.data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
               <CartesianGrid stroke="rgba(148,163,184,0.14)" vertical={false} />
               <XAxis dataKey={xKey} tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -256,6 +255,7 @@ function ResultCard({ result }: { result: Record<string, unknown> }) {
 
   if (display?.mode === 'weapon_build' && primary) {
     const attachments = Array.isArray(primary.attachments) ? primary.attachments : [];
+    const notes = Array.isArray(result.practical_notes) ? result.practical_notes : [];
     return (
       <>
       <div className="mt-3 rounded-lg border border-border/70 bg-bg-primary/60 p-3">
@@ -278,6 +278,13 @@ function ResultCard({ result }: { result: Record<string, unknown> }) {
             </span>
           ))}
         </div>
+        {notes.length > 0 && (
+          <div className="mt-3 space-y-1 rounded border border-accent-gold/25 bg-accent-gold/10 px-3 py-2 text-xs text-text-secondary">
+            {notes.map((note) => (
+              <div key={String(note)}>{String(note)}</div>
+            ))}
+          </div>
+        )}
         <div className="mt-3 grid grid-cols-3 gap-2">
           {(display.columns || []).slice(1, 4).map((column) => (
             <div key={column} className="rounded border border-border/60 bg-bg-card/70 px-2 py-1.5">
@@ -350,27 +357,23 @@ function newId() {
   return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-export default function AskStats() {
+type PendingAsk = {
+  id: number;
+  question: string;
+};
+
+export default function AskStats({ pendingAsk }: { pendingAsk?: PendingAsk | null }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const handledPendingAskRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setMessages(JSON.parse(raw));
-    } catch {
-      setMessages([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-20)));
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
 
-  async function ask(nextInput?: string) {
+  const ask = useCallback(async (nextInput?: string) => {
     const question = (nextInput ?? input).trim();
     if (!question || loading) return;
 
@@ -451,7 +454,13 @@ export default function AskStats() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [input, loading, messages]);
+
+  useEffect(() => {
+    if (!pendingAsk || handledPendingAskRef.current === pendingAsk.id) return;
+    handledPendingAskRef.current = pendingAsk.id;
+    void ask(pendingAsk.question);
+  }, [ask, pendingAsk]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

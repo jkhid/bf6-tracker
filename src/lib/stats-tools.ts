@@ -6,6 +6,7 @@ import {
   AttachmentMod,
   averageTtk,
   buildScore,
+  RANGE_BANDS,
   rangeBandFromText,
   ttkAtDistance,
   Weapon,
@@ -77,6 +78,7 @@ type DateRange = {
   start?: string;
   end?: string;
   label: string;
+  requestedMatches?: number;
 };
 
 type Aggregates = {
@@ -135,6 +137,65 @@ function metricList(value: unknown): StatMetric[] {
     typeof metric === 'string' && STAT_METRICS.includes(metric as StatMetric)
   );
   return metrics.length > 0 ? metrics : ['matches', 'kills', 'deaths', 'wins', 'kd', 'win_rate'];
+}
+
+function uniqueMetrics(metrics: StatMetric[]): StatMetric[] {
+  return [...new Set(metrics)];
+}
+
+function metricsWithDependencies(metrics: StatMetric[]): StatMetric[] {
+  const expanded: StatMetric[] = [];
+  for (const metric of metrics) {
+    expanded.push(metric);
+    switch (metric) {
+      case 'kd':
+        expanded.push('kills', 'deaths', 'matches');
+        break;
+      case 'win_rate':
+        expanded.push('wins', 'losses', 'matches');
+        break;
+      case 'kills_per_match':
+        expanded.push('kills', 'matches');
+        break;
+      case 'deaths_per_match':
+        expanded.push('deaths', 'matches');
+        break;
+      case 'damage_per_match':
+        expanded.push('damage', 'matches');
+        break;
+      case 'damage_per_minute':
+        expanded.push('damage', 'playtime_minutes');
+        break;
+      case 'kpm':
+        expanded.push('kills', 'playtime_minutes');
+        break;
+      case 'headshot_pct':
+        expanded.push('headshot_kills', 'kills');
+        break;
+      case 'revives_per_match':
+        expanded.push('revives', 'matches');
+        break;
+      default:
+        break;
+    }
+  }
+  return uniqueMetrics(expanded);
+}
+
+function compareDisplayColumns(metrics: StatMetric[], sortBy: StatMetric): string[] {
+  const requested = uniqueMetrics([sortBy, ...metrics]);
+  const columns: Array<'player' | StatMetric> = ['player'];
+
+  for (const metric of requested) columns.push(metric);
+
+  const dependencyColumns = metricsWithDependencies(requested).filter(
+    (metric) => !requested.includes(metric)
+  );
+  for (const metric of dependencyColumns) columns.push(metric);
+
+  if (!columns.includes('matches')) columns.push('matches');
+  const base = [...new Set(columns)];
+  return base.map((column) => column === 'matches' ? 'included_matches' : column);
 }
 
 function getOffsetMs(timezone: string, date: Date): number {
@@ -319,10 +380,18 @@ export function dateRangeFromText(
 }
 
 async function roster(): Promise<PlayerRef[]> {
-  return (await getTrackedPlayers()).map((player) => ({
-    name: player.name,
-    displayName: player.displayName,
-  }));
+  const seen = new Set<string>();
+  const players: PlayerRef[] = [];
+  for (const player of await getTrackedPlayers()) {
+    const key = player.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    players.push({
+      name: player.name,
+      displayName: player.displayName,
+    });
+  }
+  return players;
 }
 
 async function resolvePlayer(value: unknown): Promise<PlayerRef | ToolResult> {
@@ -451,6 +520,15 @@ function statsResult(player: PlayerRef, range: DateRange, events: GameEventRow[]
     start: range.start,
     end: range.end,
   };
+  if (range.requestedMatches) {
+    result.requested_matches = range.requestedMatches;
+    result.actual_matches = stats.matches;
+    result.included_matches = stats.matches;
+    if (stats.matches !== range.requestedMatches) {
+      result.precision_note =
+        'Recent-match windows use complete stored event rows, so the computed match total can exceed the requested count when a row contains multiple matches.';
+    }
+  }
 
   for (const metric of metrics) result[metric] = deriveMetric(metric, stats);
   result.display = {
@@ -634,6 +712,99 @@ function attachmentCombos(attachments: AttachmentMod[]): AttachmentMod[][] {
   return combos;
 }
 
+function attachmentAffectsTtk(attachment: AttachmentMod): boolean {
+  return Boolean(
+    attachment.damageProfile?.length ||
+    attachment.rangeMod ||
+    attachment.mods.rpm_mod ||
+    attachment.mods.hsmultiplier_mod
+  );
+}
+
+function attachmentPracticalValue(attachment: AttachmentMod, goal: string): number {
+  const mods = attachment.mods;
+  let value = 0;
+  value += Math.max(0, mods.mag_size_mod || 0) * 3.5;
+  value += Math.max(0, -(mods.reload_mod || 0)) * 20;
+  value += Math.max(0, -(mods.ads_mod || 0)) * (goal.includes('close') || goal.includes('cqc') ? 1.2 : 0.7);
+  value += Math.max(0, mods.control_mod || 0) * (goal.includes('control') || goal.includes('long') ? 2.4 : 1.3);
+  value += Math.max(0, mods.bv_mod || 0) * (goal.includes('long') ? 0.12 : 0.04);
+  value += Math.max(0, mods.hipfire_mod || 0) * (goal.includes('close') || goal.includes('hip') || goal.includes('cqc') ? 0.8 : 0.2);
+  value += Math.max(0, mods.mobility_mod || 0) * 0.8;
+  if (attachmentAffectsTtk(attachment)) value += 30;
+  return value;
+}
+
+function practicalAttachmentPool(weapon: Weapon, attachments: AttachmentMod[], range: typeof RANGE_BANDS[number], goal: string): AttachmentMod[] {
+  const explicitUtility = /flashlight|laser|right accessory|scope|optic|sight/i.test(goal);
+  const filtered = attachments.filter((attachment) => {
+    if (!explicitUtility && attachment.slot === 'Right Accessory') return false;
+    if (!explicitUtility && attachment.slot === 'Scope') return false;
+    return attachmentPracticalValue(attachment, `${goal} ${range.id}`) > 0;
+  });
+
+  const bySlot = new Map<string, AttachmentMod[]>();
+  for (const attachment of filtered) {
+    const list = bySlot.get(attachment.slot) || [];
+    list.push(attachment);
+    bySlot.set(attachment.slot, list);
+  }
+
+  const practical: AttachmentMod[] = [];
+  for (const [slot, list] of bySlot) {
+    if (slot === 'Magazine' && weapon.magSize < 20) {
+      const largest = [...list].sort((a, b) => (b.mods.mag_size_mod || 0) - (a.mods.mag_size_mod || 0))[0];
+      if (largest) practical.push(largest);
+      continue;
+    }
+    practical.push(
+      ...list
+        .sort((a, b) => attachmentPracticalValue(b, `${goal} ${range.id}`) - attachmentPracticalValue(a, `${goal} ${range.id}`))
+        .slice(0, 5)
+    );
+  }
+
+  return practical;
+}
+
+function shotsToKillAtDistance(weapon: Weapon, distance: number): number {
+  if (!weapon.damage.length) return 0;
+  let chosen = weapon.damage[0];
+  for (const damage of weapon.damage) {
+    if (damage.dropoff <= distance) chosen = damage;
+    else break;
+  }
+  return chosen.shots_to_kill || 0;
+}
+
+function practicalBuildScore(
+  baseWeapon: Weapon,
+  builtWeapon: Weapon,
+  range: typeof RANGE_BANDS[number],
+  peers: Weapon[],
+  attachments: AttachmentMod[],
+  goal: string
+): number {
+  const base = buildScore(builtWeapon, range, peers);
+  const ttk = averageTtk(builtWeapon, range) ?? Infinity;
+  const baseTtk = averageTtk(baseWeapon, range) ?? Infinity;
+  const ttkImprovement = Number.isFinite(ttk) && Number.isFinite(baseTtk) ? Math.max(0, baseTtk - ttk) / Math.max(baseTtk, 1) : 0;
+  const representativeDistance = range.id === 'cqc' ? 5 : range.id === 'short' ? 20 : range.id === 'mid' ? 60 : 100;
+  const shots = shotsToKillAtDistance(builtWeapon, representativeDistance);
+  const killsPerMag = shots > 0 ? builtWeapon.magSize / shots : 0;
+  const magFloor = baseWeapon.magSize < 20 ? 25 : 20;
+  const magScore = Math.min(builtWeapon.magSize / magFloor, 1);
+  const hasLowValueOnly = attachments.some((attachment) => attachment.slot === 'Right Accessory' || attachment.slot === 'Scope');
+  const utilityPenalty = hasLowValueOnly && !/flashlight|scope|optic|sight/i.test(goal) ? 0.08 : 0;
+  const ttkWeight = goal.includes('ttk') ? 0.3 : 0.18;
+  const practicalWeight = baseWeapon.magSize < 20 ? 0.26 : 0.12;
+
+  return Math.min(
+    1,
+    Math.max(0, base * (1 - practicalWeight) + magScore * practicalWeight + ttkImprovement * ttkWeight + Math.min(killsPerMag / 3, 1) * 0.08 - utilityPenalty)
+  );
+}
+
 const statsProperties = {
   start: {
     type: 'string',
@@ -645,7 +816,8 @@ const statsProperties = {
     type: 'number',
     minimum: 1,
     maximum: 50,
-    description: 'Optional recent game-event count, for questions like "last 10 games".',
+    description:
+      'Optional recent match count, for questions like "last 10 games". Because stored event rows can contain multiple matches, handlers include enough recent rows to cover at least this many matches.',
   },
 };
 
@@ -660,13 +832,54 @@ async function loadPlayerEvents(playerName: string, range: DateRange, lastN?: nu
     players: [playerName],
     range,
     ascending: false,
-    limit: lastN,
+    limit: Math.max(50, lastN * 8),
   });
-  return events.reverse();
+
+  const selected: GameEventRow[] = [];
+  let matches = 0;
+  for (const event of events) {
+    selected.push(event);
+    matches += Math.max(0, Number(event.matches_delta || 0));
+    if (matches >= lastN) break;
+  }
+
+  return selected.reverse();
 }
 
 function resultPeriod(range: DateRange, lastN?: number): string {
-  return lastN ? `${range.label}, last ${lastN} game-events` : range.label;
+  return lastN ? `${range.label}, most recent at least ${lastN} matches` : range.label;
+}
+
+type TrendGranularity = 'day' | 'week' | 'month';
+
+function trendGranularity(value: unknown): TrendGranularity {
+  const text = stringValue(value)?.toLowerCase();
+  if (text === 'week' || text === 'weekly') return 'week';
+  if (text === 'month' || text === 'monthly') return 'month';
+  return 'day';
+}
+
+function localDateKey(timezone: string, date: Date): string {
+  const parts = localParts(timezone, date);
+  return `${parts.year}-${String(parts.monthIndex + 1).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function bucketLabel(timezone: string, iso: string, granularity: TrendGranularity): string {
+  const date = new Date(iso);
+  const parts = localParts(timezone, date);
+  if (granularity === 'month') {
+    return `${parts.year}-${String(parts.monthIndex + 1).padStart(2, '0')}`;
+  }
+  if (granularity === 'week') {
+    const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
+    const start = addLocalDays(
+      timezone,
+      zonedDateToUtc(timezone, parts.year, parts.monthIndex, parts.day),
+      -Math.max(weekdayIndex, 0)
+    );
+    return localDateKey(timezone, start);
+  }
+  return localDateKey(timezone, date);
 }
 
 function localDateTime(iso: string, timezone: string): string {
@@ -698,7 +911,12 @@ export const statsTools: StatsTool[] = [
       const range = dateRangeFromText(input.start, input.end, context.timezone, context.now);
       const lastN = lastNValue(input.last_n_games);
       const events = await loadPlayerEvents(player.name, range, lastN);
-      return statsResult(player, { ...range, label: resultPeriod(range, lastN) }, events, metricList(input.metrics));
+      return statsResult(
+        player,
+        { ...range, label: resultPeriod(range, lastN), requestedMatches: lastN },
+        events,
+        metricList(input.metrics)
+      );
     },
   },
   {
@@ -707,36 +925,69 @@ export const statsTools: StatsTool[] = [
     input_schema: {
       type: 'object',
       properties: {
-        players: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 20 },
+        players: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 20,
+          description:
+            'Specific players to compare. For everyone/all players queries, omit this and set all_players true.',
+        },
+        all_players: {
+          type: 'boolean',
+          description: 'Use the full tracked roster. Set this for "everyone", "all players", or roster-wide rankings.',
+        },
         ...statsProperties,
         metrics: { type: 'array', items: { type: 'string', enum: metricEnum } },
         sort_by: { type: 'string', enum: metricEnum },
         sort_direction: { type: 'string', enum: ['asc', 'desc'] },
       },
-      required: ['players', 'metrics'],
+      required: ['metrics'],
     },
     async handler(input, context) {
       const playerInputs = Array.isArray(input.players) ? input.players : [];
-      const resolved = await Promise.all(playerInputs.map(resolvePlayer));
-      const unsupported = resolved.find(isUnsupported);
-      if (unsupported) return unsupported;
-      const players = resolved as PlayerRef[];
+      const wantsAllPlayers =
+        input.all_players === true ||
+        playerInputs.length === 0 ||
+        playerInputs.some((player) => {
+          const value = stringValue(player)?.toLowerCase();
+          return value === 'all' || value === 'everyone' || value === 'all players';
+        });
+      const players = wantsAllPlayers ? await roster() : null;
+      let resolvedPlayers: PlayerRef[];
+      if (players) {
+        resolvedPlayers = players;
+      } else {
+        const resolved = await Promise.all(playerInputs.map(resolvePlayer));
+        const unsupported = resolved.find(isUnsupported);
+        if (unsupported) return unsupported;
+        resolvedPlayers = resolved as PlayerRef[];
+      }
       const range = dateRangeFromText(input.start, input.end, context.timezone, context.now);
-      const metrics = metricList(input.metrics);
+      const requestedMetrics = metricList(input.metrics);
       const lastN = lastNValue(input.last_n_games);
-      const rangeWithLabel = { ...range, label: resultPeriod(range, lastN) };
+      const rangeWithLabel = {
+        ...range,
+        label: resultPeriod(range, lastN),
+        requestedMatches: lastN,
+      };
       const eventsByPlayer = await Promise.all(
-        players.map(async (player) => ({
+        resolvedPlayers.map(async (player) => ({
           player,
           events: await loadPlayerEvents(player.name, range, lastN),
         }))
       );
-      const rows = eventsByPlayer.map(({ player, events }) =>
-        statsResult(player, rangeWithLabel, events, metrics)
-      );
       const sortBy = STAT_METRICS.includes(input.sort_by as StatMetric)
         ? (input.sort_by as StatMetric)
-        : metrics[0];
+        : requestedMetrics[0];
+      const displayColumns = compareDisplayColumns(requestedMetrics, sortBy);
+      const metricColumns = displayColumns.map((column) => column === 'included_matches' ? 'matches' : column);
+      const metrics = metricsWithDependencies(metricColumns.filter((column): column is StatMetric =>
+        column !== 'player' && STAT_METRICS.includes(column as StatMetric)
+      ));
+      const rows = eventsByPlayer.map(({ player, events }) =>
+        statsResult(player, rangeWithLabel, events, metrics)
+      ).filter((row) => !lastN || Number(row.actual_matches || 0) >= lastN);
       const sortDirection = input.sort_direction === 'asc' ? 'asc' : 'desc';
       rows.sort((a, b) => {
         const av = Number(a[sortBy] || 0);
@@ -744,12 +995,15 @@ export const statsTools: StatsTool[] = [
         return sortDirection === 'asc' ? av - bv : bv - av;
       });
       const chartRows = rows
-        .slice(0, 8)
         .map((row) => ({ label: String(row.player), value: Number(row[sortBy] || 0) }));
       return {
         period: rangeWithLabel.label,
         start: range.start,
         end: range.end,
+        roster_count: wantsAllPlayers ? resolvedPlayers.length : undefined,
+        excluded_for_insufficient_matches: lastN
+          ? resolvedPlayers.length - rows.length
+          : undefined,
         rows,
         chart: {
           type: 'bar',
@@ -761,8 +1015,87 @@ export const statsTools: StatsTool[] = [
         display: {
           mode: 'ranking',
           title: `${sortBy.toUpperCase()} ranking`,
-          columns: ['player', sortBy, 'matches', 'wins', 'kills', 'deaths'],
-          maxRows: 5,
+          columns: displayColumns,
+          maxRows: rows.length,
+        },
+      };
+    },
+  },
+  {
+    name: 'stat_trend',
+    description: 'Bucket one player or the full roster by day, week, or month for trend questions and charts.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        player: { type: 'string', description: 'Optional player. Omit when all_players is true.' },
+        all_players: {
+          type: 'boolean',
+          description: 'Use the full tracked roster as one combined group.',
+        },
+        ...statsProperties,
+        metric: { type: 'string', enum: metricEnum },
+        granularity: { type: 'string', enum: ['day', 'week', 'month', 'daily', 'weekly', 'monthly'] },
+      },
+      required: ['metric'],
+    },
+    async handler(input, context) {
+      const range = dateRangeFromText(input.start || 'last 30 days', input.end, context.timezone, context.now);
+      const granularity = trendGranularity(input.granularity);
+      const metric = STAT_METRICS.includes(input.metric as StatMetric) ? (input.metric as StatMetric) : 'kd';
+      const allPlayers = input.all_players === true || !input.player;
+      const selectedPlayers = allPlayers ? await roster() : [await resolvePlayer(input.player)];
+      const unsupported = selectedPlayers.find(isUnsupported);
+      if (unsupported) return unsupported;
+      const players = selectedPlayers as PlayerRef[];
+      const events = await loadGameEvents({ players: players.map((player) => player.name), range });
+      const buckets = new Map<string, GameEventRow[]>();
+
+      for (const event of events) {
+        const key = bucketLabel(context.timezone, event.event_time, granularity);
+        const list = buckets.get(key) || [];
+        list.push(event);
+        buckets.set(key, list);
+      }
+
+      const rows = [...buckets.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([bucket, bucketEvents]) => {
+          const stats = aggregate(bucketEvents);
+          return {
+            bucket,
+            period: bucket,
+            matches: stats.matches,
+            kills: stats.kills,
+            deaths: stats.deaths,
+            wins: stats.wins,
+            losses: stats.losses,
+            kd: deriveMetric('kd', stats),
+            win_rate: deriveMetric('win_rate', stats),
+            damage: stats.damage,
+            damage_per_match: deriveMetric('damage_per_match', stats),
+            kpm: deriveMetric('kpm', stats),
+            metric_value: deriveMetric(metric, stats),
+          };
+        });
+
+      return {
+        player: allPlayers ? 'All players' : players[0].displayName,
+        period: range.label,
+        metric,
+        granularity,
+        rows,
+        chart: {
+          type: 'bar',
+          title: `${metric.toUpperCase()} by ${granularity}`,
+          xKey: 'bucket',
+          yKey: 'metric_value',
+          data: rows,
+        },
+        display: {
+          mode: 'compact_table',
+          title: `${metric.toUpperCase()} trend`,
+          columns: ['bucket', 'metric_value', 'matches', 'kills', 'deaths', 'wins'],
+          maxRows: rows.length,
         },
       };
     },
@@ -1046,6 +1379,99 @@ export const statsTools: StatsTool[] = [
     },
   },
   {
+    name: 'compare_squadmates',
+    description: 'Rank which tracked teammates a player performs best or worst with in shared clustered games.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        player: { type: 'string' },
+        ...statsProperties,
+        metric: { type: 'string', enum: ['wins', 'win_rate', 'matches', 'kills', 'kd', 'damage', 'revives'] },
+        direction: { type: 'string', enum: ['best', 'worst'] },
+        n: { type: 'number', minimum: 1, maximum: 20 },
+      },
+      required: ['player'],
+    },
+    async handler(input, context) {
+      const player = await resolvePlayer(input.player);
+      if (isUnsupported(player)) return player;
+      const players = (await roster()).filter((candidate) => candidate.name !== player.name);
+      const range = dateRangeFromText(input.start || 'all time', input.end, context.timezone, context.now);
+      const metric = ['wins', 'win_rate', 'matches', 'kills', 'kd', 'damage', 'revives'].includes(String(input.metric))
+        ? String(input.metric)
+        : 'win_rate';
+      const direction: Direction = input.direction === 'worst' ? 'worst' : 'best';
+      const n = Math.max(1, Math.min(Math.floor(numberValue(input.n, players.length)), 20));
+      const events = await loadGameEvents({ players: [player.name, ...players.map((candidate) => candidate.name)], range });
+      const sessions = buildSessionsFromEvents(events);
+
+      const rows = players.map((teammate) => {
+        const sharedGames = sessions.flatMap((session) =>
+          session.games.filter((game) => {
+            const names = game.players.map((entry) => entry.playerName);
+            return names.includes(player.name) && names.includes(teammate.name);
+          })
+        );
+        const playerEvents = sharedGames
+          .map((game) => game.players.find((entry) => entry.playerName === player.name))
+          .filter((event): event is PlayerGameDelta => Boolean(event));
+        const stats = playerEvents.reduce(
+          (sum, event) => ({
+            matches: sum.matches + Number(event.matchesDelta || 0),
+            kills: sum.kills + Number(event.kills || 0),
+            deaths: sum.deaths + Number(event.deaths || 0),
+            wins: sum.wins + Number(event.wins || 0),
+            losses: sum.losses + Number(event.losses || 0),
+            damage: sum.damage + Number(event.damage || 0),
+            headshot_kills: sum.headshot_kills + Number(event.headshotKills || 0),
+            revives: sum.revives + Number(event.revives || 0),
+            vehicle_kills: sum.vehicle_kills + Number(event.vehicleKills || 0),
+            seconds: 0,
+          }),
+          aggregate([])
+        );
+        const row = {
+          teammate: teammate.displayName,
+          shared_games: sharedGames.length,
+          matches: stats.matches,
+          wins: stats.wins,
+          losses: stats.losses,
+          win_rate: deriveMetric('win_rate', stats),
+          kills: stats.kills,
+          deaths: stats.deaths,
+          kd: deriveMetric('kd', stats),
+          damage: stats.damage,
+          revives: stats.revives,
+        };
+        return { ...row, metric_value: Number(row[metric as keyof typeof row] || 0) };
+      })
+        .filter((row) => row.shared_games > 0)
+        .sort((a, b) => direction === 'best' ? b.metric_value - a.metric_value : a.metric_value - b.metric_value)
+        .slice(0, n);
+
+      return {
+        player: player.displayName,
+        period: range.label,
+        metric,
+        direction,
+        rows,
+        chart: {
+          type: 'bar',
+          title: `${player.displayName} squadmate ${metric}`,
+          xKey: 'teammate',
+          yKey: 'metric_value',
+          data: rows,
+        },
+        display: {
+          mode: 'ranking',
+          title: `${player.displayName} squadmate ranking`,
+          columns: ['teammate', 'metric_value', 'shared_games', 'wins', 'win_rate', 'kd'],
+          maxRows: rows.length,
+        },
+      };
+    },
+  },
+  {
     name: 'top_weapon',
     description: 'Top weapons for one player over a time window, derived only from game_events.weapon_deltas.',
     input_schema: {
@@ -1091,6 +1517,132 @@ export const statsTools: StatsTool[] = [
           title: `${player.displayName} top weapons`,
           columns: ['weapon', 'kills', 'damage'],
           maxRows: n,
+        },
+      };
+    },
+  },
+  {
+    name: 'weapon_usage',
+    description: 'Rank player weapon usage from game_events.weapon_deltas. Use for questions like "who has the most SCW-10 kills" or a player’s weapon damage ranking.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        player: { type: 'string', description: 'Optional player for one-player weapon rankings.' },
+        all_players: { type: 'boolean', description: 'Rank all tracked players for one weapon.' },
+        weapon: { type: 'string', description: 'Optional specific weapon name.' },
+        category: { type: 'string', description: 'Optional weapon category such as LMG, SMG, AR, DMR, sniper, carbine.' },
+        ...statsProperties,
+        metric: { type: 'string', enum: ['kills', 'damage'] },
+        n: { type: 'number', minimum: 1, maximum: 20 },
+      },
+    },
+    async handler(input, context) {
+      const metric = input.metric === 'damage' ? 'damage' : 'kills';
+      const range = dateRangeFromText(input.start || 'all time', input.end, context.timezone, context.now);
+      const n = Math.max(1, Math.min(Math.floor(numberValue(input.n, 10)), 20));
+      const dataset = await loadWeaponDataset();
+      const category = resolveCategory(input.category);
+      const weapon = input.weapon ? await resolveWeapon(input.weapon) : null;
+      if (weapon && isWeaponUnsupported(weapon)) return weapon;
+      const allowedWeaponNames = new Set(
+        dataset.weapons
+          .filter((candidate) => category ? candidate.category.toLowerCase() === category.toLowerCase() : true)
+          .map((candidate) => candidate.name)
+      );
+      const targetWeaponName = weapon && !isWeaponUnsupported(weapon) ? weapon.name : undefined;
+
+      if (category && allowedWeaponNames.size === 0) {
+        return { unsupported: true, reason: `No weapons found for category "${String(input.category || '')}".` };
+      }
+
+      const wantsAllPlayers = input.all_players === true || !input.player;
+      const selectedPlayers = wantsAllPlayers ? await roster() : [await resolvePlayer(input.player)];
+      const unsupported = selectedPlayers.find(isUnsupported);
+      if (unsupported) return unsupported;
+      const players = selectedPlayers as PlayerRef[];
+      const playerByName = new Map(players.map((player) => [player.name, player]));
+      const events = await loadGameEvents({ players: players.map((player) => player.name), range });
+
+      if (targetWeaponName && wantsAllPlayers) {
+        const rowsByPlayer = new Map<string, { player: string; weapon: string; kills: number; damage: number }>();
+        for (const event of events) {
+          const deltas = Array.isArray(event.weapon_deltas) ? event.weapon_deltas : [];
+          for (const delta of deltas) {
+            if (delta.name !== targetWeaponName) continue;
+            const playerRef = playerByName.get(event.player_name);
+            if (!playerRef) continue;
+            const current = rowsByPlayer.get(event.player_name) || {
+              player: playerRef.displayName,
+              weapon: targetWeaponName,
+              kills: 0,
+              damage: 0,
+            };
+            current.kills += Number(delta.kills || 0);
+            current.damage += Number(delta.damage || 0);
+            rowsByPlayer.set(event.player_name, current);
+          }
+        }
+        const rows = [...rowsByPlayer.values()].sort((a, b) => b[metric] - a[metric]).slice(0, n);
+        return {
+          weapon: targetWeaponName,
+          period: range.label,
+          metric,
+          rows,
+          chart: {
+            type: 'bar',
+            title: `${targetWeaponName} ${metric} by player`,
+            xKey: 'player',
+            yKey: metric,
+            data: rows,
+          },
+          display: {
+            mode: 'ranking',
+            title: `${targetWeaponName} ${metric}`,
+            columns: ['player', 'weapon', 'kills', 'damage'],
+            maxRows: rows.length,
+          },
+        };
+      }
+
+      const weapons = new Map<string, { weapon: string; category?: string; kills: number; damage: number }>();
+      const categoryByWeapon = new Map(dataset.weapons.map((candidate) => [candidate.name, candidate.category]));
+      for (const event of events) {
+        const deltas = Array.isArray(event.weapon_deltas) ? event.weapon_deltas : [];
+        for (const delta of deltas) {
+          if (targetWeaponName && delta.name !== targetWeaponName) continue;
+          if (category && !allowedWeaponNames.has(delta.name)) continue;
+          const current = weapons.get(delta.name) || {
+            weapon: delta.name,
+            category: categoryByWeapon.get(delta.name),
+            kills: 0,
+            damage: 0,
+          };
+          current.kills += Number(delta.kills || 0);
+          current.damage += Number(delta.damage || 0);
+          weapons.set(delta.name, current);
+        }
+      }
+      const rows = [...weapons.values()].sort((a, b) => b[metric] - a[metric]).slice(0, n);
+
+      return {
+        player: wantsAllPlayers ? 'All players' : players[0].displayName,
+        period: range.label,
+        weapon: targetWeaponName,
+        category,
+        metric,
+        rows,
+        chart: {
+          type: 'bar',
+          title: `${metric.toUpperCase()} by weapon`,
+          xKey: 'weapon',
+          yKey: metric,
+          data: rows,
+        },
+        display: {
+          mode: 'ranking',
+          title: 'Weapon usage',
+          columns: ['weapon', 'category', 'kills', 'damage'],
+          maxRows: rows.length,
         },
       };
     },
@@ -1171,6 +1723,7 @@ export const statsTools: StatsTool[] = [
       properties: {
         weapon: { type: 'string' },
         range: { type: 'string', description: 'close, short, mid, long, cqc, or range band id.' },
+        goal: { type: 'string', description: 'Build goal such as fastest TTK, close-range aggressive, low recoil, larger magazine, or balanced.' },
         n: { type: 'number', minimum: 1, maximum: 5 },
       },
       required: ['weapon', 'range'],
@@ -1180,45 +1733,67 @@ export const statsTools: StatsTool[] = [
       if (isWeaponUnsupported(weapon)) return weapon;
       const dataset = await loadWeaponDataset();
       const range = rangeBandFromText(input.range);
-      const attachments = dataset.attachmentsByWeapon[weapon.name] || [];
+      const goal = `${stringValue(input.goal) || ''} ${stringValue(input.range) || ''}`.toLowerCase();
+      const attachments = practicalAttachmentPool(weapon, dataset.attachmentsByWeapon[weapon.name] || [], range, goal);
       if (attachments.length === 0) {
         return { unsupported: true, reason: `${weapon.name} does not have cataloged attachments.` };
       }
       const n = Math.max(1, Math.min(Math.floor(numberValue(input.n, 1)), 5));
       const combos = attachmentCombos(attachments);
       const calculated = combos.map((combo) => applyAttachments(weapon, combo));
+      const baseAvgTtk = averageTtk(weapon, range);
       const rows = combos
         .map((combo, index) => {
           const built = calculated[index];
-          const score = buildScore(built, range, calculated);
+          const score = practicalBuildScore(weapon, built, range, calculated, combo, goal);
+          const avgTtk = averageTtk(built, range);
+          const ttkDelta = baseAvgTtk !== null && avgTtk !== null ? avgTtk - baseAvgTtk : null;
           return {
             weapon: weapon.name,
             range: range.label,
             score: Number((score * 100).toFixed(1)),
             attachments: combo.map((attachment) => `${attachment.slot}: ${attachment.name}`),
             attachment_count: combo.length,
-            avg_ttk_ms: Math.round(averageTtk(built, range) ?? 0),
+            base_avg_ttk_ms: baseAvgTtk === null ? null : Math.round(baseAvgTtk),
+            avg_ttk_ms: Math.round(avgTtk ?? 0),
+            ttk_delta_ms: ttkDelta === null ? null : Math.round(ttkDelta),
             ttk_10m_ms: Math.round(ttkAtDistance(built, 10) ?? 0),
             ttk_20m_ms: Math.round(ttkAtDistance(built, 20) ?? 0),
             ads_ms: Math.round(built.ads),
+            mag_size: Math.round(built.magSize),
             hipfire: Math.round(built.hipfire),
             control: Math.round(built.control),
             mobility: Math.round(built.mobility),
             bullet_velocity: Math.round(built.bv),
+            ttk_improving_attachments: combo.filter(attachmentAffectsTtk).map((attachment) => attachment.name),
           };
         })
         .sort((a, b) => b.score - a.score)
         .slice(0, n);
       const bestCombo = combos
-        .map((combo, index) => ({ combo, built: calculated[index], score: buildScore(calculated[index], range, calculated) }))
+        .map((combo, index) => ({
+          combo,
+          built: calculated[index],
+          score: practicalBuildScore(weapon, calculated[index], range, calculated, combo, goal),
+        }))
         .sort((a, b) => b.score - a.score)[0];
+      const bestTtkDelta = rows[0]?.ttk_delta_ms;
 
       return {
         weapon: weapon.name,
         range: range.label,
+        goal: stringValue(input.goal) || stringValue(input.range) || 'balanced',
         scoring: range.id === 'cqc'
-          ? 'Math-only close range score: TTK, ADS, hipfire, mobility, and control.'
-          : 'Math-only score: TTK, control, bullet velocity, ADS, and mobility weighted by range.',
+          ? 'Practical close-range score: TTK first, then magazine size, ADS, hipfire, mobility, and control. Utility/right-accessory picks are ignored unless explicitly requested.'
+          : 'Practical score: TTK, control, bullet velocity, magazine size, ADS, and mobility weighted by range. Utility/right-accessory picks are ignored unless explicitly requested.',
+        practical_notes: [
+          weapon.magSize < 20
+            ? `${weapon.name} has a ${weapon.magSize}-round stock magazine, so practical builds strongly prefer the largest magazine option.`
+            : null,
+          bestTtkDelta !== null && bestTtkDelta !== undefined && bestTtkDelta >= 0
+            ? 'The recommended build does not reduce mathematical TTK; it improves practical handling/sustain around the same TTK.'
+            : null,
+        ].filter(Boolean),
         rows,
         chart: bestCombo ? {
           type: 'line',
@@ -1231,7 +1806,7 @@ export const statsTools: StatsTool[] = [
           mode: 'weapon_build',
           title: `${weapon.name} ${range.label} build`,
           primary: rows[0],
-          columns: ['score', 'avg_ttk_ms', 'ads_ms', 'hipfire', 'control', 'mobility'],
+          columns: ['score', 'avg_ttk_ms', 'ttk_delta_ms', 'mag_size', 'ads_ms', 'hipfire', 'control', 'mobility'],
           maxRows: n,
         },
       };
