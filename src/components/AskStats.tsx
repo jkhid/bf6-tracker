@@ -76,7 +76,7 @@ const EXAMPLE_GROUPS = [
 function formatValue(value: unknown, key = ''): string {
   if (typeof value === 'number') {
     if (key === 'score') return value.toFixed(1);
-    if ((key.includes('rate') || key.includes('pct')) && value >= 0 && value <= 1) {
+    if ((key === 'accuracy' || key.includes('rate') || key.includes('pct')) && value >= 0 && value <= 1) {
       return `${(value * 100).toFixed(1)}%`;
     }
     if (!Number.isInteger(value)) return value.toFixed(2);

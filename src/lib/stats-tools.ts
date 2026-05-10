@@ -530,6 +530,20 @@ function deriveMetric(metric: StatMetric, stats: Aggregates): number {
   }
 }
 
+function eventAccuracy(event: GameEventRow): number | null {
+  const deltas = Array.isArray(event.weapon_deltas) ? event.weapon_deltas : [];
+  const totals = deltas.reduce(
+    (sum, delta) => ({
+      shotsFired: sum.shotsFired + Number(delta.shotsFired || 0),
+      shotsHit: sum.shotsHit + Number(delta.shotsHit || 0),
+    }),
+    { shotsFired: 0, shotsHit: 0 }
+  );
+
+  if (totals.shotsFired <= 0) return null;
+  return totals.shotsHit / totals.shotsFired;
+}
+
 function statsResult(player: PlayerRef, range: DateRange, events: GameEventRow[], metrics: StatMetric[]) {
   const stats = aggregate(events);
   const result: Record<string, unknown> = {
@@ -1121,13 +1135,13 @@ export const statsTools: StatsTool[] = [
   },
   {
     name: 'top_matches',
-    description: 'Find a player’s best or worst single game-events by kills, deaths, kd, damage, or revives.',
+    description: 'Find a player’s best or worst single game-events by kills, deaths, assists, kd, accuracy, damage, or revives.',
     input_schema: {
       type: 'object',
       properties: {
         player: { type: 'string' },
         ...statsProperties,
-        metric: { type: 'string', enum: ['kills', 'deaths', 'kd', 'damage', 'revives', 'vehicle_kills', 'headshot_kills'] },
+        metric: { type: 'string', enum: ['kills', 'deaths', 'assists', 'kd', 'accuracy', 'damage', 'revives', 'vehicle_kills', 'headshot_kills'] },
         direction: { type: 'string', enum: ['best', 'worst'] },
         n: { type: 'number', minimum: 1, maximum: 10 },
       },
@@ -1137,7 +1151,7 @@ export const statsTools: StatsTool[] = [
       const player = await resolvePlayer(input.player);
       if (isUnsupported(player)) return player;
       const range = dateRangeFromText(input.start || 'all time', input.end, context.timezone, context.now);
-      const metric = ['kills', 'deaths', 'kd', 'damage', 'revives', 'vehicle_kills', 'headshot_kills'].includes(String(input.metric)) ? String(input.metric) : 'kills';
+      const metric = ['kills', 'deaths', 'assists', 'kd', 'accuracy', 'damage', 'revives', 'vehicle_kills', 'headshot_kills'].includes(String(input.metric)) ? String(input.metric) : 'kills';
       const direction: Direction = input.direction === 'worst' ? 'worst' : 'best';
       const n = Math.max(1, Math.min(Math.floor(numberValue(input.n, 1)), 10));
       const events = await loadGameEvents({ players: [player.name], range });
@@ -1147,8 +1161,10 @@ export const statsTools: StatsTool[] = [
           local_time: localDateTime(event.event_time, context.timezone),
           matches: event.matches_delta,
           kills: event.kills,
+          assists: event.assists,
           deaths: event.deaths,
           kd: event.deaths > 0 ? event.kills / event.deaths : event.kills,
+          accuracy: eventAccuracy(event),
           result: event.wins > 0 ? 'win' : 'loss',
           wins: event.wins,
           losses: event.losses,
@@ -1156,7 +1172,9 @@ export const statsTools: StatsTool[] = [
           revives: event.revives,
           metric_value: metric === 'kd'
             ? event.deaths > 0 ? event.kills / event.deaths : event.kills
-            : Number(event[metric as keyof GameEventRow] || 0),
+            : metric === 'accuracy'
+              ? eventAccuracy(event) ?? 0
+              : Number(event[metric as keyof GameEventRow] || 0),
         }))
         .sort((a, b) => direction === 'best' ? b.metric_value - a.metric_value : a.metric_value - b.metric_value)
         .slice(0, n);
@@ -1171,7 +1189,7 @@ export const statsTools: StatsTool[] = [
           mode: n === 1 ? 'stat_card' : 'compact_table',
           title: `${player.displayName} ${direction} ${metric}`,
           primary: rows[0],
-          columns: ['local_time', 'kills', 'deaths', 'kd', 'result', 'damage'],
+          columns: ['local_time', 'kills', 'assists', 'deaths', 'kd', 'accuracy', 'result', 'damage'],
           maxRows: n,
         },
       };
@@ -1269,7 +1287,7 @@ export const statsTools: StatsTool[] = [
   },
   {
     name: 'match_history',
-    description: 'Return recent match-event breakdowns for one player with date, kills, deaths, win/loss, damage, and weapons.',
+    description: 'Return recent match-event breakdowns for one player with date, kills, assists, deaths, accuracy, win/loss, damage, and weapons.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1293,8 +1311,10 @@ export const statsTools: StatsTool[] = [
           local_time: localDateTime(event.event_time, context.timezone),
           matches: event.matches_delta,
           kills: event.kills,
+          assists: event.assists,
           deaths: event.deaths,
           kd: event.deaths > 0 ? event.kills / event.deaths : event.kills,
+          accuracy: eventAccuracy(event),
           result: event.wins > 0 ? 'win' : 'loss',
           wins: event.wins,
           losses: event.losses,
@@ -1314,7 +1334,7 @@ export const statsTools: StatsTool[] = [
         display: {
           mode: 'compact_table',
           title: `${player.displayName} match history`,
-          columns: ['local_time', 'kills', 'deaths', 'kd', 'result', 'damage'],
+          columns: ['local_time', 'kills', 'assists', 'deaths', 'kd', 'accuracy', 'result', 'damage'],
           maxRows: Math.min(limit, 5),
         },
       };

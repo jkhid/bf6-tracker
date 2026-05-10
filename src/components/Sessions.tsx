@@ -8,6 +8,8 @@ interface WeaponDelta {
   name: string;
   kills: number;
   damage: number;
+  shotsFired?: number;
+  shotsHit?: number;
   image: string;
   altImage: string;
 }
@@ -19,6 +21,7 @@ interface PlayerGameDelta {
   matchesDelta: number;
   kills: number;
   deaths: number;
+  assists: number;
   kd: number;
   wins: number;
   losses: number;
@@ -26,6 +29,7 @@ interface PlayerGameDelta {
   revives: number;
   vehicleKills: number;
   damage: number;
+  score?: number;
   weaponDeltas: WeaponDelta[];
 }
 
@@ -35,7 +39,9 @@ interface Game {
   matchCount: number;
   kills: number;
   deaths: number;
+  assists: number;
   damage: number;
+  score?: number;
   wins: number;
   losses: number;
 }
@@ -74,6 +80,24 @@ function formatDamage(dmg: number): string {
   return dmg.toString();
 }
 
+function accuracyFromWeapons(weapons: WeaponDelta[]): number | null {
+  const totals = weapons.reduce(
+    (sum, weapon) => ({
+      shotsFired: sum.shotsFired + Number(weapon.shotsFired || 0),
+      shotsHit: sum.shotsHit + Number(weapon.shotsHit || 0),
+    }),
+    { shotsFired: 0, shotsHit: 0 }
+  );
+
+  if (totals.shotsFired <= 0) return null;
+  return totals.shotsHit / totals.shotsFired;
+}
+
+function formatAccuracy(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function WeaponChip({ weapon }: { weapon: WeaponDelta }) {
   const imgSrc = weapon.altImage || weapon.image;
   return (
@@ -98,6 +122,7 @@ function WeaponChip({ weapon }: { weapon: WeaponDelta }) {
 
 function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: number }) {
   const isTopKd = rank === 0;
+  const accuracy = accuracyFromWeapons(player.weaponDeltas);
 
   return (
     <div className="relative overflow-hidden rounded-lg border border-border/40 bg-gradient-to-br from-bg-card to-bg-primary">
@@ -126,7 +151,7 @@ function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: numbe
         </div>
 
         {/* Stats row */}
-        <div className="grid grid-cols-5 gap-1.5 mb-2.5">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2.5">
           <div className="text-center">
             <div className="text-[9px] text-text-muted uppercase tracking-wider">K/D</div>
             <div className="text-sm font-bold text-accent-gold tabular-nums">
@@ -138,8 +163,20 @@ function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: numbe
             <div className="text-sm font-bold text-text-primary tabular-nums">{player.kills}</div>
           </div>
           <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">Assists</div>
+            <div className="text-sm font-bold text-text-primary tabular-nums">
+              {player.assists > 0 ? player.assists : '-'}
+            </div>
+          </div>
+          <div className="text-center">
             <div className="text-[9px] text-text-muted uppercase tracking-wider">Deaths</div>
             <div className="text-sm font-bold text-text-primary tabular-nums">{player.deaths}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">ACC</div>
+            <div className="text-sm font-bold text-text-primary tabular-nums">
+              {formatAccuracy(accuracy)}
+            </div>
           </div>
           <div className="text-center">
             <div className="text-[9px] text-text-muted uppercase tracking-wider">DMG</div>
@@ -147,19 +184,14 @@ function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: numbe
               {player.damage > 0 ? formatDamage(player.damage) : '-'}
             </div>
           </div>
-          <div className="text-center">
-            <div className="text-[9px] text-text-muted uppercase tracking-wider">Revives</div>
-            <div className="text-sm font-bold text-text-primary tabular-nums">
-              {player.revives > 0 ? player.revives : '-'}
-            </div>
-          </div>
         </div>
 
         {/* Secondary stats */}
-        {(player.headshotKills > 0 || player.vehicleKills > 0) && (
+        {(player.headshotKills > 0 || player.vehicleKills > 0 || player.revives > 0) && (
           <div className="flex gap-3 text-[10px] text-text-muted mb-2">
             {player.headshotKills > 0 && <span>HS: {player.headshotKills}</span>}
             {player.vehicleKills > 0 && <span>Vehicles: {player.vehicleKills}</span>}
+            {player.revives > 0 && <span>Revives: {player.revives}</span>}
           </div>
         )}
 
@@ -176,9 +208,10 @@ function PlayerGameCard({ player, rank }: { player: PlayerGameDelta; rank: numbe
   );
 }
 
-function GameCard({ game, gameNumber, totalGames }: { game: Game; gameNumber: number; totalGames: number }) {
+function GameCard({ game, gameNumber }: { game: Game; gameNumber: number }) {
   const isWin = game.wins > 0;
   const groupKd = game.deaths > 0 ? (game.kills / game.deaths).toFixed(2) : game.kills.toString();
+  const groupAccuracy = accuracyFromWeapons(game.players.flatMap((player) => player.weaponDeltas));
 
   // Sort players by kills descending for ranking
   const rankedPlayers = [...game.players].sort((a, b) => b.kd - a.kd);
@@ -225,12 +258,22 @@ function GameCard({ game, gameNumber, totalGames }: { game: Game; gameNumber: nu
             <span className="text-text-muted">Kills </span>
             <span className="font-bold text-text-primary tabular-nums">{game.kills}</span>
           </div>
+          <div className="text-center hidden sm:block">
+            <span className="text-text-muted">Ast </span>
+            <span className="font-bold text-text-primary tabular-nums">{game.assists || 0}</span>
+          </div>
           {game.damage > 0 && (
             <div className="text-center">
               <span className="text-text-muted">DMG </span>
               <span className="font-bold text-info tabular-nums">{formatDamage(game.damage)}</span>
             </div>
           )}
+          <div className="text-center hidden md:block">
+            <span className="text-text-muted">ACC </span>
+            <span className="font-bold text-text-primary tabular-nums">
+              {formatAccuracy(groupAccuracy)}
+            </span>
+          </div>
           <div className="text-center">
             <span className="text-text-muted">K/D </span>
             <span className="font-bold text-accent-gold tabular-nums">{groupKd}</span>
@@ -442,7 +485,6 @@ export default function Sessions() {
                       key={game.time}
                       game={game}
                       gameNumber={i + 1}
-                      totalGames={session.games.length}
                     />
                   ))}
                 </div>
