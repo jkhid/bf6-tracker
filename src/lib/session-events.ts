@@ -8,11 +8,15 @@ export interface Snapshot {
   matches_played: number;
   kills: number;
   deaths: number;
+  assists: number;
   wins: number;
   losses: number;
   kd: number;
+  kda: number;
   kpm: number;
   dpm: number;
+  score: number;
+  score_per_minute: number;
   headshot_kills: number;
   revives: number;
   vehicle_kills: number;
@@ -21,16 +25,76 @@ export interface Snapshot {
   repairs: number;
   objectives_armed: number;
   objectives_destroyed: number;
-  weapon_stats: { name: string; kills: number; damage: number; image?: string; altImage?: string }[];
+  weapon_stats: WeaponSnapshotStat[];
+  class_stats: NamedSnapshotStat[];
+  vehicle_stats: NamedSnapshotStat[];
+  gadget_stats: NamedSnapshotStat[];
   raw_stats: { userName?: string; avatar?: string; secondsPlayed?: number };
+}
+
+export interface NamedSnapshotStat {
+  name: string;
+  type?: string;
+  image?: string;
+  kills?: number;
+  deaths?: number;
+  assists?: number;
+  damage?: number;
+  damageTo?: number;
+  assistDamage?: number;
+  score?: number;
+  timePlayed?: number | string;
+  deployments?: number;
+  uses?: number;
+  vehiclesDestroyedWith?: number;
+  [key: string]: unknown;
+}
+
+export interface WeaponSnapshotStat extends NamedSnapshotStat {
+  kills: number;
+  damage: number;
+  headshotKills?: number;
+  hipfireKills?: number;
+  adsKills?: number;
+  multiKills?: number;
+  shotsFired?: number;
+  shotsHit?: number;
+  accuracy?: string | number;
+  headshots?: string | number;
+  killsPerMinute?: number;
+  damagePerMinute?: number;
+  altImage?: string;
 }
 
 export interface WeaponDelta {
   name: string;
   kills: number;
   damage: number;
+  headshotKills: number;
+  hipfireKills: number;
+  adsKills: number;
+  multiKills: number;
+  shotsFired: number;
+  shotsHit: number;
   image: string;
   altImage: string;
+}
+
+export interface NamedStatDelta {
+  name: string;
+  type?: string;
+  image?: string;
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  damageTo: number;
+  assistDamage: number;
+  score: number;
+  timePlayed: number;
+  deployments: number;
+  uses: number;
+  vehiclesDestroyedWith: number;
 }
 
 export interface PlayerGameDelta {
@@ -40,14 +104,20 @@ export interface PlayerGameDelta {
   matchesDelta: number;
   kills: number;
   deaths: number;
+  assists: number;
   kd: number;
+  kda: number;
   wins: number;
   losses: number;
   headshotKills: number;
   revives: number;
   vehicleKills: number;
   damage: number;
+  score: number;
   weaponDeltas: WeaponDelta[];
+  classDeltas: NamedStatDelta[];
+  vehicleDeltas: NamedStatDelta[];
+  gadgetDeltas: NamedStatDelta[];
 }
 
 export interface Game {
@@ -56,7 +126,9 @@ export interface Game {
   matchCount: number;
   kills: number;
   deaths: number;
+  assists: number;
   damage: number;
+  score: number;
   wins: number;
   losses: number;
 }
@@ -85,15 +157,20 @@ export interface GameEventRow {
   matches_delta: number;
   kills: number;
   deaths: number;
+  assists: number;
   wins: number;
   losses: number;
   headshot_kills: number;
   revives: number;
   vehicle_kills: number;
   damage: number;
+  score: number;
   seconds_delta: number;
   avatar: string;
   weapon_deltas: WeaponDelta[];
+  class_deltas: NamedStatDelta[];
+  vehicle_deltas: NamedStatDelta[];
+  gadget_deltas: NamedStatDelta[];
 }
 
 export interface SessionSummaryRow {
@@ -135,6 +212,67 @@ export function positiveCounterDelta(after: unknown, before: unknown): number {
   return Math.max(counterDelta(after, before), 0);
 }
 
+function statKey(stat: NamedSnapshotStat): string {
+  return stat.name || String(stat.id || '');
+}
+
+function timePlayedSeconds(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value !== 'string') return 0;
+  const hours = value.match(/(\d+(?:\.\d+)?)\s*h/i);
+  const minutes = value.match(/(\d+(?:\.\d+)?)\s*m/i);
+  const seconds = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+  if (hours || minutes || seconds) {
+    return Math.round(
+      (hours ? Number(hours[1]) * 3600 : 0)
+      + (minutes ? Number(minutes[1]) * 60 : 0)
+      + (seconds ? Number(seconds[1]) : 0)
+    );
+  }
+  return toNumber(value);
+}
+
+function computeNamedStatDeltas(beforeStats: NamedSnapshotStat[] = [], afterStats: NamedSnapshotStat[] = []): NamedStatDelta[] {
+  const beforeByName = new Map<string, NamedSnapshotStat>();
+  for (const stat of beforeStats) {
+    const key = statKey(stat);
+    if (key) beforeByName.set(key, stat);
+  }
+
+  const deltas: NamedStatDelta[] = [];
+  for (const stat of afterStats) {
+    const key = statKey(stat);
+    if (!key || !beforeByName.has(key)) continue;
+
+    const before = beforeByName.get(key)!;
+    const delta: NamedStatDelta = {
+      name: stat.name,
+      type: stat.type,
+      image: stat.image,
+      kills: positiveCounterDelta(stat.kills, before.kills),
+      deaths: positiveCounterDelta(stat.deaths, before.deaths),
+      assists: positiveCounterDelta(stat.assists, before.assists),
+      damage: positiveCounterDelta(stat.damage, before.damage),
+      damageTo: positiveCounterDelta(stat.damageTo, before.damageTo),
+      assistDamage: positiveCounterDelta(stat.assistDamage, before.assistDamage),
+      score: positiveCounterDelta(stat.score, before.score),
+      timePlayed: Math.max(timePlayedSeconds(stat.timePlayed) - timePlayedSeconds(before.timePlayed), 0),
+      deployments: positiveCounterDelta(stat.deployments, before.deployments),
+      uses: positiveCounterDelta(stat.uses, before.uses),
+      vehiclesDestroyedWith: positiveCounterDelta(stat.vehiclesDestroyedWith, before.vehiclesDestroyedWith),
+    };
+
+    if (Object.entries(delta).some(([k, v]) => !['name', 'type', 'image'].includes(k) && typeof v === 'number' && v > 0)) {
+      deltas.push(delta);
+    }
+  }
+
+  return deltas.sort(
+    (a, b) => (b.kills + b.damage + b.damageTo + b.assistDamage + b.score)
+      - (a.kills + a.damage + a.damageTo + a.assistDamage + a.score)
+  );
+}
+
 export function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesDelta: number): boolean {
   if (!Number.isFinite(matchesDelta) || matchesDelta <= 0) return false;
   if (matchesDelta > MAX_MATCHES_PER_EVENT) return false;
@@ -150,6 +288,8 @@ export function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesD
   const deathsDelta = counterDelta(after.deaths, before.deaths);
   const winsDelta = counterDelta(after.wins, before.wins);
   const lossesDelta = counterDelta(after.losses, before.losses);
+  const assistsDelta = counterDelta(after.assists, before.assists);
+  const scoreDelta = counterDelta(after.score, before.score);
   const revivesDelta = counterDelta(after.revives, before.revives);
   const headshotDelta = counterDelta(after.headshot_kills, before.headshot_kills);
   const vehicleKillsDelta = counterDelta(after.vehicle_kills, before.vehicle_kills);
@@ -159,6 +299,8 @@ export function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesD
     deathsDelta,
     winsDelta,
     lossesDelta,
+    assistsDelta,
+    scoreDelta,
     revivesDelta,
     headshotDelta,
     vehicleKillsDelta,
@@ -175,9 +317,9 @@ export function isPlausibleGameEvent(before: Snapshot, after: Snapshot, matchesD
 }
 
 export function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDelta[] {
-  const weaponsBefore = new Map<string, { kills: number; damage: number }>();
+  const weaponsBefore = new Map<string, WeaponSnapshotStat>();
   for (const w of before.weapon_stats || []) {
-    weaponsBefore.set(w.name, { kills: toNumber(w.kills), damage: toNumber(w.damage) });
+    weaponsBefore.set(w.name, w);
   }
 
   const deltas: WeaponDelta[] = [];
@@ -185,13 +327,21 @@ export function computeWeaponDeltas(before: Snapshot, after: Snapshot): WeaponDe
     if (!weaponsBefore.has(w.name)) continue;
 
     const bw = weaponsBefore.get(w.name)!;
-    const killDelta = toNumber(w.kills) - bw.kills;
-    const damageDelta = toNumber(w.damage) - bw.damage;
-    if (killDelta > 0 || damageDelta > 0) {
+    const delta = {
+      kills: positiveCounterDelta(w.kills, bw.kills),
+      damage: positiveCounterDelta(w.damage, bw.damage),
+      headshotKills: positiveCounterDelta(w.headshotKills, bw.headshotKills),
+      hipfireKills: positiveCounterDelta(w.hipfireKills, bw.hipfireKills),
+      adsKills: positiveCounterDelta(w.adsKills, bw.adsKills),
+      multiKills: positiveCounterDelta(w.multiKills, bw.multiKills),
+      shotsFired: positiveCounterDelta(w.shotsFired, bw.shotsFired),
+      shotsHit: positiveCounterDelta(w.shotsHit, bw.shotsHit),
+    };
+
+    if (Object.values(delta).some((value) => value > 0)) {
       deltas.push({
         name: w.name,
-        kills: killDelta,
-        damage: damageDelta,
+        ...delta,
         image: w.image || '',
         altImage: w.altImage || '',
       });
@@ -217,6 +367,9 @@ export function buildGameEventRow(playerName: string, before: Snapshot, after: S
     after.raw_stats?.secondsPlayed,
     before.raw_stats?.secondsPlayed
   );
+  const classDeltas = computeNamedStatDeltas(before.class_stats, after.class_stats);
+  const vehicleDeltas = computeNamedStatDeltas(before.vehicle_stats, after.vehicle_stats);
+  const gadgetDeltas = computeNamedStatDeltas(before.gadget_stats, after.gadget_stats);
 
   return {
     player_name: playerName,
@@ -228,15 +381,20 @@ export function buildGameEventRow(playerName: string, before: Snapshot, after: S
     matches_delta: positiveCounterDelta(after.matches_played, before.matches_played),
     kills: positiveCounterDelta(after.kills, before.kills),
     deaths: positiveCounterDelta(after.deaths, before.deaths),
+    assists: positiveCounterDelta(after.assists, before.assists),
     wins: positiveCounterDelta(after.wins, before.wins),
     losses: positiveCounterDelta(after.losses, before.losses),
     headshot_kills: positiveCounterDelta(after.headshot_kills, before.headshot_kills),
     revives: positiveCounterDelta(after.revives, before.revives),
     vehicle_kills: positiveCounterDelta(after.vehicle_kills, before.vehicle_kills),
     damage: Math.max(damage, 0),
+    score: positiveCounterDelta(after.score, before.score),
     seconds_delta: Math.round(secondsDelta),
     avatar: after.raw_stats?.avatar || '',
     weapon_deltas: weaponDeltas.slice(0, 8),
+    class_deltas: classDeltas.slice(0, 8),
+    vehicle_deltas: vehicleDeltas.slice(0, 8),
+    gadget_deltas: gadgetDeltas.slice(0, 8),
   };
 }
 
@@ -251,14 +409,20 @@ function buildPlayerDeltaFromEvent(event: GameEventRow): PlayerGameDelta {
     matchesDelta: toNumber(event.matches_delta),
     kills,
     deaths,
+    assists: toNumber(event.assists),
     kd: deaths > 0 ? kills / deaths : kills,
+    kda: deaths > 0 ? (kills + toNumber(event.assists)) / deaths : kills + toNumber(event.assists),
     wins: toNumber(event.wins),
     losses: toNumber(event.losses),
     headshotKills: toNumber(event.headshot_kills),
     revives: toNumber(event.revives),
     vehicleKills: toNumber(event.vehicle_kills),
     damage: toNumber(event.damage),
+    score: toNumber(event.score),
     weaponDeltas: Array.isArray(event.weapon_deltas) ? event.weapon_deltas : [],
+    classDeltas: Array.isArray(event.class_deltas) ? event.class_deltas : [],
+    vehicleDeltas: Array.isArray(event.vehicle_deltas) ? event.vehicle_deltas : [],
+    gadgetDeltas: Array.isArray(event.gadget_deltas) ? event.gadget_deltas : [],
   };
 }
 
@@ -371,13 +535,15 @@ export function buildSessionsFromEvents(rawEvents: GameEventRow[]): Session[] {
       const players = gameEvents.map(buildPlayerDeltaFromEvent);
       const kills = players.reduce((s, p) => s + p.kills, 0);
       const deaths = players.reduce((s, p) => s + p.deaths, 0);
+      const assists = players.reduce((s, p) => s + p.assists, 0);
       const damage = players.reduce((s, p) => s + p.damage, 0);
+      const score = players.reduce((s, p) => s + p.score, 0);
       const wins = Math.max(...players.map((p) => p.wins), 0);
       const losses = Math.max(...players.map((p) => p.losses), 0);
       const matchCount = Math.max(...players.map((p) => p.matchesDelta), 0);
       const time = gameEvents[gameEvents.length - 1].event_time;
 
-      return { time, players, matchCount, kills, deaths, damage, wins, losses };
+      return { time, players, matchCount, kills, deaths, assists, damage, score, wins, losses };
     });
 
     // Most recent game first within a session

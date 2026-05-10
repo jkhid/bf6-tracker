@@ -48,6 +48,56 @@ function positiveCounterDelta(after, before) {
   return Math.max(counterDelta(after, before), 0);
 }
 
+function timePlayedSeconds(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value !== 'string') return 0;
+  const hours = value.match(/(\d+(?:\.\d+)?)\s*h/i);
+  const minutes = value.match(/(\d+(?:\.\d+)?)\s*m/i);
+  const seconds = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+  if (hours || minutes || seconds) {
+    return Math.round(
+      (hours ? Number(hours[1]) * 3600 : 0)
+      + (minutes ? Number(minutes[1]) * 60 : 0)
+      + (seconds ? Number(seconds[1]) : 0)
+    );
+  }
+  return toNumber(value);
+}
+
+function computeNamedStatDeltas(beforeStats = [], afterStats = []) {
+  const beforeByName = new Map(beforeStats.map((stat) => [stat.name, stat]));
+  const deltas = [];
+
+  for (const stat of afterStats) {
+    if (!stat.name || !beforeByName.has(stat.name)) continue;
+    const before = beforeByName.get(stat.name);
+    const delta = {
+      name: stat.name,
+      type: stat.type,
+      image: stat.image,
+      kills: positiveCounterDelta(stat.kills, before.kills),
+      deaths: positiveCounterDelta(stat.deaths, before.deaths),
+      assists: positiveCounterDelta(stat.assists, before.assists),
+      damage: positiveCounterDelta(stat.damage, before.damage),
+      damageTo: positiveCounterDelta(stat.damageTo, before.damageTo),
+      assistDamage: positiveCounterDelta(stat.assistDamage, before.assistDamage),
+      score: positiveCounterDelta(stat.score, before.score),
+      timePlayed: Math.max(timePlayedSeconds(stat.timePlayed) - timePlayedSeconds(before.timePlayed), 0),
+      deployments: positiveCounterDelta(stat.deployments, before.deployments),
+      uses: positiveCounterDelta(stat.uses, before.uses),
+      vehiclesDestroyedWith: positiveCounterDelta(stat.vehiclesDestroyedWith, before.vehiclesDestroyedWith),
+    };
+    if (Object.entries(delta).some(([key, value]) => !['name', 'type', 'image'].includes(key) && typeof value === 'number' && value > 0)) {
+      deltas.push(delta);
+    }
+  }
+
+  return deltas.sort(
+    (a, b) => (b.kills + b.damage + b.damageTo + b.assistDamage + b.score)
+      - (a.kills + a.damage + a.damageTo + a.assistDamage + a.score)
+  );
+}
+
 function isPlausibleGameEvent(before, after, matchesDelta) {
   if (!Number.isFinite(matchesDelta) || matchesDelta <= 0) return false;
   if (matchesDelta > MAX_MATCHES_PER_EVENT) return false;
@@ -63,6 +113,8 @@ function isPlausibleGameEvent(before, after, matchesDelta) {
   const deathsDelta = counterDelta(after.deaths, before.deaths);
   const winsDelta = counterDelta(after.wins, before.wins);
   const lossesDelta = counterDelta(after.losses, before.losses);
+  const assistsDelta = counterDelta(after.assists, before.assists);
+  const scoreDelta = counterDelta(after.score, before.score);
   const revivesDelta = counterDelta(after.revives, before.revives);
   const headshotDelta = counterDelta(after.headshot_kills, before.headshot_kills);
   const vehicleKillsDelta = counterDelta(after.vehicle_kills, before.vehicle_kills);
@@ -71,6 +123,8 @@ function isPlausibleGameEvent(before, after, matchesDelta) {
     deathsDelta,
     winsDelta,
     lossesDelta,
+    assistsDelta,
+    scoreDelta,
     revivesDelta,
     headshotDelta,
     vehicleKillsDelta,
@@ -86,10 +140,7 @@ function isPlausibleGameEvent(before, after, matchesDelta) {
 function computeWeaponDeltas(before, after) {
   const weaponsBefore = new Map();
   for (const weapon of before.weapon_stats || []) {
-    weaponsBefore.set(weapon.name, {
-      kills: toNumber(weapon.kills),
-      damage: toNumber(weapon.damage),
-    });
+    weaponsBefore.set(weapon.name, weapon);
   }
 
   const deltas = [];
@@ -97,13 +148,20 @@ function computeWeaponDeltas(before, after) {
     if (!weaponsBefore.has(weapon.name)) continue;
 
     const beforeWeapon = weaponsBefore.get(weapon.name);
-    const killDelta = toNumber(weapon.kills) - beforeWeapon.kills;
-    const damageDelta = toNumber(weapon.damage) - beforeWeapon.damage;
-    if (killDelta > 0 || damageDelta > 0) {
+    const delta = {
+      kills: positiveCounterDelta(weapon.kills, beforeWeapon.kills),
+      damage: positiveCounterDelta(weapon.damage, beforeWeapon.damage),
+      headshotKills: positiveCounterDelta(weapon.headshotKills, beforeWeapon.headshotKills),
+      hipfireKills: positiveCounterDelta(weapon.hipfireKills, beforeWeapon.hipfireKills),
+      adsKills: positiveCounterDelta(weapon.adsKills, beforeWeapon.adsKills),
+      multiKills: positiveCounterDelta(weapon.multiKills, beforeWeapon.multiKills),
+      shotsFired: positiveCounterDelta(weapon.shotsFired, beforeWeapon.shotsFired),
+      shotsHit: positiveCounterDelta(weapon.shotsHit, beforeWeapon.shotsHit),
+    };
+    if (Object.values(delta).some((value) => value > 0)) {
       deltas.push({
         name: weapon.name,
-        kills: killDelta,
-        damage: damageDelta,
+        ...delta,
         image: weapon.image || '',
         altImage: weapon.altImage || '',
       });
@@ -125,6 +183,10 @@ function buildGameEventRow(playerName, before, after) {
   if (damage <= 0 && (before.raw_stats?.secondsPlayed === undefined || after.raw_stats?.secondsPlayed === undefined)) {
     damage = weaponDeltas.reduce((sum, weapon) => sum + weapon.damage, 0);
   }
+  const secondsDelta = positiveCounterDelta(
+    after.raw_stats?.secondsPlayed,
+    before.raw_stats?.secondsPlayed
+  );
 
   return {
     player_name: playerName,
@@ -136,14 +198,20 @@ function buildGameEventRow(playerName, before, after) {
     matches_delta: positiveCounterDelta(after.matches_played, before.matches_played),
     kills: positiveCounterDelta(after.kills, before.kills),
     deaths: positiveCounterDelta(after.deaths, before.deaths),
+    assists: positiveCounterDelta(after.assists, before.assists),
     wins: positiveCounterDelta(after.wins, before.wins),
     losses: positiveCounterDelta(after.losses, before.losses),
     headshot_kills: positiveCounterDelta(after.headshot_kills, before.headshot_kills),
     revives: positiveCounterDelta(after.revives, before.revives),
     vehicle_kills: positiveCounterDelta(after.vehicle_kills, before.vehicle_kills),
     damage: Math.max(damage, 0),
+    score: positiveCounterDelta(after.score, before.score),
+    seconds_delta: Math.round(secondsDelta),
     avatar: after.raw_stats?.avatar || '',
     weapon_deltas: weaponDeltas,
+    class_deltas: computeNamedStatDeltas(before.class_stats, after.class_stats).slice(0, 8),
+    vehicle_deltas: computeNamedStatDeltas(before.vehicle_stats, after.vehicle_stats).slice(0, 8),
+    gadget_deltas: computeNamedStatDeltas(before.gadget_stats, after.gadget_stats).slice(0, 8),
   };
 }
 
@@ -158,6 +226,7 @@ function buildPlayerDeltaFromEvent(event) {
     matchesDelta: toNumber(event.matches_delta),
     kills,
     deaths,
+    assists: toNumber(event.assists),
     kd: deaths > 0 ? kills / deaths : kills,
     wins: toNumber(event.wins),
     losses: toNumber(event.losses),
@@ -165,6 +234,7 @@ function buildPlayerDeltaFromEvent(event) {
     revives: toNumber(event.revives),
     vehicleKills: toNumber(event.vehicle_kills),
     damage: toNumber(event.damage),
+    score: toNumber(event.score),
     weaponDeltas: Array.isArray(event.weapon_deltas) ? event.weapon_deltas : [],
   };
 }
@@ -224,7 +294,9 @@ function buildSessionsFromEvents(rawEvents) {
         matchCount: Math.max(...players.map((player) => player.matchesDelta), 0),
         kills: players.reduce((sum, player) => sum + player.kills, 0),
         deaths: players.reduce((sum, player) => sum + player.deaths, 0),
+        assists: players.reduce((sum, player) => sum + player.assists, 0),
         damage: players.reduce((sum, player) => sum + player.damage, 0),
+        score: players.reduce((sum, player) => sum + player.score, 0),
         wins: Math.max(...players.map((player) => player.wins), 0),
         losses: Math.max(...players.map((player) => player.losses), 0),
       };

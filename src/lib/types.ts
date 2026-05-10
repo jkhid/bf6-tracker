@@ -63,13 +63,17 @@ export interface GameModeStat {
   gamemodeName: string;
   image: string;
   altImage: string;
+  assists: number;
   kills: number;
   deaths: number;
   killDeath: number;
+  kdaRatio: number;
   wins: number;
   losses: number;
   winPercent: string;
   matches: number;
+  score: number;
+  scorePerMinute: number;
   headshots: string;
   headshotKills: number;
   kpm: number;

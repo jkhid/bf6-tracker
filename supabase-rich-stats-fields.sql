@@ -1,0 +1,18 @@
+-- Adds richer cumulative snapshot fields and per-event deltas for Ask/player analysis.
+-- Safe to run multiple times in the Supabase SQL Editor.
+
+ALTER TABLE snapshots
+  ADD COLUMN IF NOT EXISTS assists INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS kda REAL NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS score INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS score_per_minute REAL NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS class_stats JSONB DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS vehicle_stats JSONB DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS gadget_stats JSONB DEFAULT '[]';
+
+ALTER TABLE game_events
+  ADD COLUMN IF NOT EXISTS assists INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS score INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS class_deltas JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS vehicle_deltas JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS gadget_deltas JSONB NOT NULL DEFAULT '[]';

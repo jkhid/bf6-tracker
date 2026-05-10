@@ -22,11 +22,15 @@ async function loadFromSnapshotFallback(limit: number, offset: number) {
         matches_played,
         kills,
         deaths,
+        assists,
         wins,
         losses,
         kd,
+        kda,
         kpm,
         dpm,
+        score,
+        score_per_minute,
         headshot_kills,
         revives,
         vehicle_kills,
@@ -35,6 +39,9 @@ async function loadFromSnapshotFallback(limit: number, offset: number) {
         repairs,
         objectives_armed,
         objectives_destroyed,
+        class_stats,
+        vehicle_stats,
+        gadget_stats,
         raw_stats
       `)
       .gte('captured_at', since)
@@ -43,7 +50,13 @@ async function loadFromSnapshotFallback(limit: number, offset: number) {
 
     if (error) throw new Error(error.message);
     if (!data || data.length === 0) break;
-    snapshots.push(...(data as Snapshot[]).map((snapshot) => ({ ...snapshot, weapon_stats: [] })));
+    snapshots.push(...(data as Snapshot[]).map((snapshot) => ({
+      ...snapshot,
+      weapon_stats: [],
+      class_stats: snapshot.class_stats || [],
+      vehicle_stats: snapshot.vehicle_stats || [],
+      gadget_stats: snapshot.gadget_stats || [],
+    })));
     if (data.length < 1000) break;
   }
 

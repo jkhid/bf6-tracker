@@ -6,11 +6,15 @@ CREATE TABLE snapshots (
   matches_played INT NOT NULL DEFAULT 0,
   kills INT NOT NULL DEFAULT 0,
   deaths INT NOT NULL DEFAULT 0,
+  assists INT NOT NULL DEFAULT 0,
   wins INT NOT NULL DEFAULT 0,
   losses INT NOT NULL DEFAULT 0,
   kd REAL NOT NULL DEFAULT 0,
+  kda REAL NOT NULL DEFAULT 0,
   kpm REAL NOT NULL DEFAULT 0,
   dpm REAL NOT NULL DEFAULT 0,
+  score INT NOT NULL DEFAULT 0,
+  score_per_minute REAL NOT NULL DEFAULT 0,
   headshot_kills INT NOT NULL DEFAULT 0,
   revives INT NOT NULL DEFAULT 0,
   vehicle_kills INT NOT NULL DEFAULT 0,
@@ -20,6 +24,9 @@ CREATE TABLE snapshots (
   objectives_armed INT NOT NULL DEFAULT 0,
   objectives_destroyed INT NOT NULL DEFAULT 0,
   weapon_stats JSONB DEFAULT '[]',
+  class_stats JSONB DEFAULT '[]',
+  vehicle_stats JSONB DEFAULT '[]',
+  gadget_stats JSONB DEFAULT '[]',
   raw_stats JSONB DEFAULT '{}'
 );
 

@@ -9,6 +9,68 @@ const FETCH_TIMEOUT_MS = 15000;
 
 export const maxDuration = 30;
 
+type WeaponApiStat = {
+  weaponName: string;
+  type?: string;
+  kills: number;
+  damage: number;
+  headshots?: string | number;
+  headshotKills?: number;
+  accuracy?: string | number;
+  image?: string;
+  altImage?: string;
+  hipfireKills?: number;
+  adsKills?: number;
+  multiKills?: number;
+  shotsFired?: number;
+  shotsHit?: number;
+  killsPerMinute?: number;
+  damagePerMinute?: number;
+  timeEquipped?: string;
+};
+
+type NamedApiStat = {
+  className?: string;
+  vehicleName?: string;
+  gadgetName?: string;
+  type?: string;
+  image?: string;
+  kills?: number;
+  deaths?: number;
+  assists?: number;
+  damage?: number;
+  damageTo?: number;
+  assistDamage?: number;
+  score?: number;
+  secondsPlayed?: number;
+  timeIn?: string;
+  timeEquipped?: string;
+  uses?: number;
+  spawns?: number;
+  vehiclesDestroyedWith?: number;
+};
+
+function compactNamedStats(items: NamedApiStat[] | undefined, nameKey: 'className' | 'vehicleName' | 'gadgetName') {
+  return (items || [])
+    .map((item) => ({
+      name: item[nameKey] || '',
+      type: item.type || '',
+      image: item.image || '',
+      kills: item.kills || 0,
+      deaths: item.deaths || 0,
+      assists: item.assists || 0,
+      damage: item.damage || 0,
+      damageTo: item.damageTo || 0,
+      assistDamage: item.assistDamage || 0,
+      score: item.score || 0,
+      timePlayed: item.secondsPlayed || item.timeIn || item.timeEquipped || 0,
+      deployments: item.spawns || 0,
+      uses: item.uses || 0,
+      vehiclesDestroyedWith: item.vehiclesDestroyedWith || 0,
+    }))
+    .filter((item) => item.name);
+}
+
 /**
  * Check if current time is within play hours (all times in America/Los_Angeles).
  * Mon–Thu: 3 PM – 12 AM
@@ -84,13 +146,23 @@ export async function GET(request: NextRequest) {
         // Store ALL weapons with kills > 0 (not just top 15)
         // This prevents phantom deltas when weapons rotate in/out of a truncated list
         const weapons = (stats.weapons || [])
-          .filter((w: { kills: number }) => w.kills > 0)
-          .map((w: { weaponName: string; kills: number; damage: number; headshots: string; accuracy: string; image: string; altImage: string }) => ({
+          .filter((w: WeaponApiStat) => w.kills > 0)
+          .map((w: WeaponApiStat) => ({
             name: w.weaponName,
+            type: w.type || '',
             kills: w.kills,
             damage: w.damage,
+            headshotKills: w.headshotKills || 0,
+            hipfireKills: w.hipfireKills || 0,
+            adsKills: w.adsKills || 0,
+            multiKills: w.multiKills || 0,
+            shotsFired: w.shotsFired || 0,
+            shotsHit: w.shotsHit || 0,
             headshots: w.headshots,
             accuracy: w.accuracy,
+            killsPerMinute: w.killsPerMinute || 0,
+            damagePerMinute: w.damagePerMinute || 0,
+            timePlayed: w.timeEquipped || 0,
             image: w.image || '',
             altImage: w.altImage || '',
           }));
@@ -110,11 +182,15 @@ export async function GET(request: NextRequest) {
           matches_played: redsec.matches || 0,
           kills: redsec.kills || 0,
           deaths: redsec.deaths || 0,
+          assists: redsec.assists || 0,
           wins: redsec.wins || 0,
           losses: redsec.losses || 0,
           kd: redsec.killDeath || 0,
+          kda: redsec.kdaRatio || 0,
           kpm: redsec.kpm || 0,
           dpm: redsec.dpm || 0,
+          score: redsec.score || 0,
+          score_per_minute: redsec.scorePerMinute || 0,
           headshot_kills: redsec.headshotKills || 0,
           revives: redsec.revives || 0,
           vehicle_kills: redsec.vehiclesDestroyedWith || 0,
@@ -124,6 +200,9 @@ export async function GET(request: NextRequest) {
           objectives_armed: redsec.objectivesArmed || 0,
           objectives_destroyed: redsec.objectivesDestroyed || 0,
           weapon_stats: weapons,
+          class_stats: compactNamedStats(stats.classes, 'className'),
+          vehicle_stats: compactNamedStats(stats.vehicles, 'vehicleName'),
+          gadget_stats: compactNamedStats(stats.gadgets, 'gadgetName'),
           raw_stats: {
             userName: stats.userName,
             avatar: stats.avatar,

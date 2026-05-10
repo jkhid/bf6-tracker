@@ -19,6 +19,8 @@ export const STAT_METRICS = [
   'kills_per_match',
   'deaths',
   'deaths_per_match',
+  'assists',
+  'kda',
   'wins',
   'losses',
   'kd',
@@ -26,6 +28,9 @@ export const STAT_METRICS = [
   'damage',
   'damage_per_match',
   'damage_per_minute',
+  'score',
+  'score_per_match',
+  'score_per_minute',
   'kpm',
   'headshot_kills',
   'headshot_pct',
@@ -85,9 +90,11 @@ type Aggregates = {
   matches: number;
   kills: number;
   deaths: number;
+  assists: number;
   wins: number;
   losses: number;
   damage: number;
+  score: number;
   headshot_kills: number;
   revives: number;
   vehicle_kills: number;
@@ -99,9 +106,11 @@ type SessionPlayerSummary = {
   matchesDelta?: number;
   kills?: number;
   deaths?: number;
+  assists?: number;
   wins?: number;
   losses?: number;
   damage?: number;
+  score?: number;
   headshotKills?: number;
   revives?: number;
   vehicleKills?: number;
@@ -461,9 +470,11 @@ function aggregate(events: GameEventRow[]): Aggregates {
       matches: sum.matches + Number(event.matches_delta || 0),
       kills: sum.kills + Number(event.kills || 0),
       deaths: sum.deaths + Number(event.deaths || 0),
+      assists: sum.assists + Number(event.assists || 0),
       wins: sum.wins + Number(event.wins || 0),
       losses: sum.losses + Number(event.losses || 0),
       damage: sum.damage + Number(event.damage || 0),
+      score: sum.score + Number(event.score || 0),
       headshot_kills: sum.headshot_kills + Number(event.headshot_kills || 0),
       revives: sum.revives + Number(event.revives || 0),
       vehicle_kills: sum.vehicle_kills + Number(event.vehicle_kills || 0),
@@ -473,9 +484,11 @@ function aggregate(events: GameEventRow[]): Aggregates {
       matches: 0,
       kills: 0,
       deaths: 0,
+      assists: 0,
       wins: 0,
       losses: 0,
       damage: 0,
+      score: 0,
       headshot_kills: 0,
       revives: 0,
       vehicle_kills: 0,
@@ -488,6 +501,8 @@ function deriveMetric(metric: StatMetric, stats: Aggregates): number {
   switch (metric) {
     case 'kd':
       return stats.deaths > 0 ? stats.kills / stats.deaths : stats.kills;
+    case 'kda':
+      return stats.deaths > 0 ? (stats.kills + stats.assists) / stats.deaths : stats.kills + stats.assists;
     case 'kills_per_match':
       return stats.matches > 0 ? stats.kills / stats.matches : 0;
     case 'deaths_per_match':
@@ -498,6 +513,10 @@ function deriveMetric(metric: StatMetric, stats: Aggregates): number {
       return stats.matches > 0 ? stats.damage / stats.matches : 0;
     case 'damage_per_minute':
       return stats.seconds > 0 ? stats.damage / (stats.seconds / 60) : 0;
+    case 'score_per_match':
+      return stats.matches > 0 ? stats.score / stats.matches : 0;
+    case 'score_per_minute':
+      return stats.seconds > 0 ? stats.score / (stats.seconds / 60) : 0;
     case 'kpm':
       return stats.seconds > 0 ? stats.kills / (stats.seconds / 60) : 0;
     case 'headshot_pct':
@@ -1205,9 +1224,11 @@ export const statsTools: StatsTool[] = [
               matches: sum.matches + Number(game.matchesDelta || 0),
               kills: sum.kills + Number(game.kills || 0),
               deaths: sum.deaths + Number(game.deaths || 0),
+              assists: sum.assists + Number(game.assists || 0),
               wins: sum.wins + Number(game.wins || 0),
               losses: sum.losses + Number(game.losses || 0),
               damage: sum.damage + Number(game.damage || 0),
+              score: sum.score + Number(game.score || 0),
               headshot_kills: sum.headshot_kills + Number(game.headshotKills || 0),
               revives: sum.revives + Number(game.revives || 0),
               vehicle_kills: sum.vehicle_kills + Number(game.vehicleKills || 0),
@@ -1334,9 +1355,11 @@ export const statsTools: StatsTool[] = [
             matches: sum.matches + Number(event.matchesDelta || 0),
             kills: sum.kills + Number(event.kills || 0),
             deaths: sum.deaths + Number(event.deaths || 0),
+            assists: sum.assists + Number(event.assists || 0),
             wins: sum.wins + Number(event.wins || 0),
             losses: sum.losses + Number(event.losses || 0),
             damage: sum.damage + Number(event.damage || 0),
+            score: sum.score + Number(event.score || 0),
             headshot_kills: sum.headshot_kills + Number(event.headshotKills || 0),
             revives: sum.revives + Number(event.revives || 0),
             vehicle_kills: sum.vehicle_kills + Number(event.vehicleKills || 0),
@@ -1420,9 +1443,11 @@ export const statsTools: StatsTool[] = [
             matches: sum.matches + Number(event.matchesDelta || 0),
             kills: sum.kills + Number(event.kills || 0),
             deaths: sum.deaths + Number(event.deaths || 0),
+            assists: sum.assists + Number(event.assists || 0),
             wins: sum.wins + Number(event.wins || 0),
             losses: sum.losses + Number(event.losses || 0),
             damage: sum.damage + Number(event.damage || 0),
+            score: sum.score + Number(event.score || 0),
             headshot_kills: sum.headshot_kills + Number(event.headshotKills || 0),
             revives: sum.revives + Number(event.revives || 0),
             vehicle_kills: sum.vehicle_kills + Number(event.vehicleKills || 0),
